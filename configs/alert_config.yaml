@@ -1,0 +1,46 @@
+# Alert Configuration
+alert_thresholds:
+  disaster:
+    spike_factor: 3.0
+    min_mentions: 50
+    severity: "high"
+  
+  conflict:
+    spike_factor: 2.5
+    min_mentions: 30
+    severity: "high"
+  
+  health:
+    spike_factor: 3.5
+    min_mentions: 40
+    severity: "critical"
+  
+  political:
+    spike_factor: 2.0
+    min_mentions: 25
+    severity: "medium"
+  
+  default:
+    spike_factor: 2.0
+    min_mentions: 20
+    severity: "medium"
+
+# Alert channels
+channels:
+  slack:
+    enabled: true
+    webhook_url: "${SLACK_WEBHOOK_URL}"
+    min_severity: "medium"
+  
+  email:
+    enabled: true
+    smtp_host: "${SMTP_HOST}"
+    smtp_port: 587
+    min_severity: "high"
+
+# Alert schedule
+schedule:
+  summary_alerts:
+    enabled: true
+    frequency: "daily"  
+    time: "09:00"  # UTC time for daily summary

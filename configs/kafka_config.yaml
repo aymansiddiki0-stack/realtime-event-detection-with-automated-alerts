@@ -1,0 +1,19 @@
+kafka:
+  bootstrap_servers: "kafka:29092"
+  topics:
+    raw_events: "raw-events"
+    processed_events: "processed-events"
+  
+  producer:
+    acks: "all"
+    retries: 3
+    batch_size: 16384
+    linger_ms: 10
+    compression_type: "snappy"
+  
+  consumer:
+    group_id: "event-processor-group"
+    auto_offset_reset: "latest"
+    enable_auto_commit: true
+    session_timeout_ms: 30000
+    max_poll_records: 100
