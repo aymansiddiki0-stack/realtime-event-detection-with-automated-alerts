@@ -18,6 +18,7 @@ services:
     restart: unless-stopped
 
   # Kafka Broker
+  #TODO: Switch port from 9093 to 9092 
   kafka:
     image: confluentinc/cp-kafka:7.5.0
     container_name: kafka
