@@ -1,7 +1,9 @@
 -- Initialize database schema for Event Detection Pipeline
 
+-- Enable UUID extension
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
+-- Events table
 CREATE TABLE IF NOT EXISTS events (
     id SERIAL PRIMARY KEY,
     event_id VARCHAR(255) UNIQUE NOT NULL,
@@ -25,6 +27,7 @@ CREATE TABLE IF NOT EXISTS events (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Indexes for performance
 CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp);
 CREATE INDEX IF NOT EXISTS idx_events_category ON events(category);
 CREATE INDEX IF NOT EXISTS idx_events_crisis_level ON events(crisis_level);
@@ -32,6 +35,7 @@ CREATE INDEX IF NOT EXISTS idx_events_processed_at ON events(processed_at);
 CREATE INDEX IF NOT EXISTS idx_events_severity ON events(severity_score DESC);
 CREATE INDEX IF NOT EXISTS idx_events_source ON events(source);
 
+-- Detected events table
 CREATE TABLE IF NOT EXISTS detected_events (
     id SERIAL PRIMARY KEY,
     detection_type VARCHAR(50),
@@ -47,6 +51,7 @@ CREATE INDEX IF NOT EXISTS idx_detected_events_severity ON detected_events(sever
 CREATE INDEX IF NOT EXISTS idx_detected_events_detected_at ON detected_events(detected_at);
 CREATE INDEX IF NOT EXISTS idx_detected_events_type ON detected_events(detection_type);
 
+-- Alerts table
 CREATE TABLE IF NOT EXISTS alerts (
     id SERIAL PRIMARY KEY,
     detection_id INTEGER REFERENCES detected_events(id),
@@ -59,6 +64,7 @@ CREATE TABLE IF NOT EXISTS alerts (
 CREATE INDEX IF NOT EXISTS idx_alerts_sent_at ON alerts(sent_at);
 CREATE INDEX IF NOT EXISTS idx_alerts_status ON alerts(status);
 
+-- Pipeline metrics table
 CREATE TABLE IF NOT EXISTS pipeline_metrics (
     id SERIAL PRIMARY KEY,
     metric_name VARCHAR(100),
@@ -69,6 +75,7 @@ CREATE TABLE IF NOT EXISTS pipeline_metrics (
 CREATE INDEX IF NOT EXISTS idx_metrics_timestamp ON pipeline_metrics(metric_timestamp);
 CREATE INDEX IF NOT EXISTS idx_metrics_name ON pipeline_metrics(metric_name);
 
+-- Create views for analytics
 CREATE OR REPLACE VIEW recent_high_severity AS
 SELECT *
 FROM events
@@ -98,5 +105,6 @@ WHERE processed_at > NOW() - INTERVAL '24 hours'
 GROUP BY DATE_TRUNC('hour', processed_at), category
 ORDER BY hour DESC, event_count DESC;
 
+-- Grant permissions
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO eventpipeline;
 GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO eventpipeline;
