@@ -197,3 +197,116 @@ class NLPProcessor:
             level = 'low'
 
         return level, min(severity_score, 1.0)
+
+    def extract_keywords(self, texts: List[str], top_n: int = 10) -> List[Tuple[str, float]]:
+        """TF-IDF keyword extraction"""
+        if not texts:
+            return []
+        
+        try:
+            vectorizer = TfidfVectorizer(
+                max_features=100,
+                stop_words='english',
+                ngram_range=(1, 2)
+            )
+
+            tfidf_matrix = vectorizer.fit_transform(texts)
+            feature_names = vectorizer.get_feature_names_out()
+
+            mean_scores = np.asarray(tfidf_matrix.mean(axis=0)).ravel()
+
+            top_indices = mean_scores.argsort()[-top_n:][::-1]
+            keywords = [(feature_names[i], mean_scores[i]) for i in top_indices]
+
+            return keywords
+
+        except Exception as e:
+            logger.error(f"Keyword extraction failed: {e}")
+            return []
+
+    def process_event(self, event: Dict) -> Dict:
+        """Run full NLP pipeline on a single event"""
+        text = self._get_text_content(event)
+
+        cleaned_text = self.clean_text(text)
+
+        entities = self.extract_entities(cleaned_text)
+
+        category, confidence = self.classify_event(cleaned_text)
+
+        crisis_level, severity_score = self.detect_crisis_level(cleaned_text, entities)
+
+        event['nlp_data'] = {
+            'cleaned_text': cleaned_text[:1000],
+            'entities': entities,
+            'category': category,
+            'category_confidence': float(confidence),
+            'crisis_level': crisis_level,
+            'severity_score': float(severity_score),
+            'word_count': len(cleaned_text.split())
+        }
+
+        return event
+
+    def _get_text_content(self, event: Dict) -> str:
+        """Combine title, description, content into one string"""
+        text_parts = []
+
+        if event.get('title'):
+            text_parts.append(event['title'])
+
+        if event.get('description'):
+            text_parts.append(event['description'])
+
+        if event.get('content'):
+            text_parts.append(event['content'])
+
+        return ' '.join(text_parts)
+
+    def batch_process(self, events: List[Dict]) -> List[Dict]:
+        """Process a batch of events"""
+        processed_events = []
+
+        for event in events:
+            try:
+                processed_event = self.process_event(event)
+                processed_events.append(processed_event)
+            except Exception as e:
+                logger.error(f"Failed to process event {event.get('event_id')}: {e}")
+                # still add it with minimal data
+                event['nlp_data'] = {
+                    'error': str(e),
+                    'category': 'unknown',
+                    'category_confidence': 0.0,
+                    'crisis_level': 'low',
+                    'severity_score': 0.0
+                }
+                processed_events.append(event)
+
+        return processed_events
+
+
+# singleton pattern
+_nlp_processor = None
+
+
+def get_nlp_processor() -> NLPProcessor:
+    """Get the NLP processor instance"""
+    global _nlp_processor
+    if _nlp_processor is None:
+        _nlp_processor = NLPProcessor()
+    return _nlp_processor
+
+
+if __name__ == '__main__':
+    # quick test
+    processor = NLPProcessor()
+
+    test_event = {
+        'title': 'Major earthquake hits California coast',
+        'description': 'A 7.5 magnitude earthquake struck near Los Angeles, causing significant damage',
+        'content': 'Emergency services are responding to a major seismic event in Southern California...'
+    }
+
+    processed = processor.process_event(test_event)
+    print("Processed event:", processed['nlp_data'])
