@@ -121,3 +121,79 @@ class NLPProcessor:
 
         return entities
 
+    def classify_event(self, text: str) -> Tuple[str, float]:
+        """Categorize the event using zero-shot classification"""
+        if not text or not self.classifier:
+            return self._keyword_classify(text)
+        
+        try:
+            result = self.classifier(
+                text[:256],  # keep it short for speed
+                self.categories,
+                multi_label=False
+            )
+
+            category = result['labels'][0]
+            confidence = result['scores'][0]
+
+            return category, confidence
+
+        except Exception as e:
+            logger.warning(f"Classification failed, using keyword fallback: {e}")
+            return self._keyword_classify(text)
+
+    def _keyword_classify(self, text: str) -> Tuple[str, float]:
+        """Simple keyword matching as fallback"""
+        if not text:
+            return 'other', 0.0
+        
+        text_lower = text.lower()
+        scores = {}
+        
+        for category, keywords in self.crisis_keywords.items():
+            score = sum(1 for keyword in keywords if keyword in text_lower)
+            scores[category] = score
+        
+        if not scores or max(scores.values()) == 0:
+            return 'other', 0.3
+
+        top_category = max(scores, key=scores.get)
+        max_score = scores[top_category]
+
+        confidence = min(max_score / 5.0, 1.0)
+
+        return top_category, confidence
+
+    def detect_crisis_level(self, text: str, entities: Dict) -> Tuple[str, float]:
+        """Figure out how severe the event is"""
+        text_lower = text.lower() if text else ""
+
+        high_priority = [
+            'dead', 'killed', 'deaths', 'casualties', 'emergency',
+            'urgent', 'critical', 'severe', 'major', 'massive'
+        ]
+
+        medium_priority = [
+            'injured', 'damage', 'warning', 'alert', 'concern',
+            'significant', 'serious', 'considerable'
+        ]
+
+        high_count = sum(1 for kw in high_priority if kw in text_lower)
+        medium_count = sum(1 for kw in medium_priority if kw in text_lower)
+
+        severity_score = (high_count * 3 + medium_count * 1.5) / 10.0
+
+        # more locations = wider impact
+        location_factor = min(len(entities.get('locations', [])) * 0.1, 0.3)
+        severity_score += location_factor
+
+        if severity_score >= 0.7:
+            level = 'critical'
+        elif severity_score >= 0.4:
+            level = 'high'
+        elif severity_score >= 0.2:
+            level = 'medium'
+        else:
+            level = 'low'
+
+        return level, min(severity_score, 1.0)
