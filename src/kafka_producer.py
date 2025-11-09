@@ -155,3 +155,196 @@ class EventProducer:
             except requests.RequestException as e:
                 logger.error(f"Error fetching from NewsAPI: {e}")
                 return []
+    
+    def fetch_reddit(self) -> List[Dict]:
+        """Fetch posts from relevant subreddits"""
+        if not self.reddit:
+            logger.warning("Reddit API not configured, using mock data")
+            return self._generate_mock_reddit()
+
+        with fetch_duration_seconds.labels(source='reddit').time():
+            try:
+                subreddits = ['worldnews', 'news', 'politics', 'technology']
+                events = []
+
+                for subreddit_name in subreddits:
+                    subreddit = self.reddit.subreddit(subreddit_name)
+
+                    # Get hot posts
+                    for post in subreddit.hot(limit=25):
+                        event = {
+                            'source': 'reddit',
+                            'title': post.title,
+                            'content': post.selftext,
+                            'url': f"https://reddit.com{post.permalink}",
+                            'subreddit': subreddit_name,
+                            'score': post.score,
+                            'num_comments': post.num_comments,
+                            'created_utc': datetime.fromtimestamp(post.created_utc).isoformat(),
+                            'timestamp': datetime.utcnow().isoformat(),
+                            'event_id': f"reddit_{post.id}_{int(time.time())}"
+                        }
+                        events.append(event)
+
+                events_fetched_total.labels(source='reddit').inc(len(events))
+                logger.info(f"Fetched {len(events)} posts from Reddit")
+                return events
+
+            except Exception as e:
+                logger.error(f"Error fetching from Reddit: {e}")
+                return []
+    
+    def fetch_gdelt(self) -> List[Dict]:
+        """Fetch events from GDELT API"""
+        with fetch_duration_seconds.labels(source='gdelt').time():
+            try:
+                # GDELT GKG API - last 15 minutes
+                url = 'https://api.gdeltproject.org/api/v2/doc/doc'
+                params = {
+                    'query': 'sourcecountry:US',
+                    'mode': 'artlist',
+                    'maxrecords': 250,
+                    'format': 'json'
+                }
+
+                response = requests.get(url, params=params, timeout=15)
+                response.raise_for_status()
+
+                articles = response.json().get('articles', [])
+                events = []
+
+                for article in articles:
+                    event = {
+                        'source': 'gdelt',
+                        'title': article.get('title', ''),
+                        'url': article.get('url', ''),
+                        'language': article.get('language', ''),
+                        'seendate': article.get('seendate', ''),
+                        'timestamp': datetime.utcnow().isoformat(),
+                        'event_id': f"gdelt_{hash(article.get('url', ''))}_{int(time.time())}"
+                    }
+                    events.append(event)
+
+                events_fetched_total.labels(source='gdelt').inc(len(events))
+                logger.info(f"Fetched {len(events)} articles from GDELT")
+                return events
+
+            except requests.RequestException as e:
+                logger.error(f"Error fetching from GDELT: {e}")
+                return []
+    
+    def _generate_mock_news(self) -> List[Dict]:
+        """Mock data when API key isn't set"""
+        mock_events = [
+            {
+                'source': 'newsapi',
+                'title': 'Major earthquake strikes Pacific region',
+                'description': 'A 7.2 magnitude earthquake hit the Pacific coast',
+                'content': 'Emergency services are responding to a major seismic event...',
+                'url': 'https://example.com/earthquake-1',
+                'published_at': datetime.utcnow().isoformat(),
+                'source_name': 'Mock News',
+                'timestamp': datetime.utcnow().isoformat(),
+                'event_id': f"mock_news_{int(time.time())}_1"
+            },
+            {
+                'source': 'newsapi',
+                'title': 'Tech company announces breakthrough in AI',
+                'description': 'New language model shows unprecedented capabilities',
+                'content': 'A leading tech company has unveiled their latest AI system...',
+                'url': 'https://example.com/ai-breakthrough',
+                'published_at': datetime.utcnow().isoformat(),
+                'source_name': 'Mock Tech News',
+                'timestamp': datetime.utcnow().isoformat(),
+                'event_id': f"mock_news_{int(time.time())}_2"
+            }
+        ]
+        return mock_events
+    
+    def _generate_mock_reddit(self) -> List[Dict]:
+        """Mock Reddit posts for testing"""
+        mock_posts = [
+            {
+                'source': 'reddit',
+                'title': 'Discussion: Climate change impacts',
+                'content': 'What are the most pressing climate issues?',
+                'url': 'https://reddit.com/r/worldnews/mock1',
+                'subreddit': 'worldnews',
+                'score': 1500,
+                'num_comments': 234,
+                'created_utc': datetime.utcnow().isoformat(),
+                'timestamp': datetime.utcnow().isoformat(),
+                'event_id': f"mock_reddit_{int(time.time())}_1"
+            }
+        ]
+        return mock_posts
+    
+    def send_to_kafka(self, events: List[Dict], source: str):
+        """Push events to Kafka topic"""
+        success_count = 0
+
+        for event in events:
+            try:
+                event['ingestion_time'] = datetime.utcnow().isoformat()
+                event['source_type'] = source
+
+                future = self.producer.send(
+                    self.topic,
+                    key=event['event_id'],
+                    value=event
+                )
+
+                record_metadata = future.get(timeout=10)
+                success_count += 1
+                messages_sent_total.labels(source=source).inc()
+
+            except KafkaError as e:
+                logger.error(f"Failed to send event {event.get('event_id')}: {e}")
+                messages_failed_total.labels(source=source).inc()
+            except Exception as e:
+                logger.error(f"Unexpected error sending event: {e}")
+                messages_failed_total.labels(source=source).inc()
+
+        logger.info(f"Sent {success_count}/{len(events)} events from {source} to Kafka")
+    
+    def run(self, fetch_interval: int = 60):
+        """Main loop - fetches data and sends to Kafka"""
+        logger.info(f"Starting event producer (fetch interval: {fetch_interval}s)")
+
+        try:
+            while True:
+                news_events = self.fetch_newsapi()
+                if news_events:
+                    self.send_to_kafka(news_events, 'newsapi')
+
+                reddit_events = self.fetch_reddit()
+                if reddit_events:
+                    self.send_to_kafka(reddit_events, 'reddit')
+
+                gdelt_events = self.fetch_gdelt()
+                if gdelt_events:
+                    self.send_to_kafka(gdelt_events, 'gdelt')
+
+                self.producer.flush()
+
+                logger.info(f"Cycle complete. Waiting {fetch_interval}s")
+                time.sleep(fetch_interval)
+
+        except KeyboardInterrupt:
+            logger.info("Shutting down producer")
+        finally:
+            self.producer.close()
+            logger.info("Producer closed")
+
+
+def main():
+    producer = EventProducer()
+
+    # Default is 60s, can be changed via env var
+    fetch_interval = int(os.getenv('FETCH_INTERVAL', 60))
+
+    producer.run(fetch_interval=fetch_interval)
+
+
+if __name__ == '__main__':
+    main()
