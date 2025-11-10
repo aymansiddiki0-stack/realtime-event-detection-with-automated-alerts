@@ -78,3 +78,153 @@ class EventDetector:
         
         logger.info(f"Detected {len(spikes)} keyword spikes")
         return spikes
+    
+    def detect_location_clusters(self, events: List[Dict]) -> List[Dict]:
+        """Detect geographic clustering of events"""
+        location_events = []
+        
+        # Extract events with locations
+        for event in events:
+            nlp_data = event.get('nlp_data', {})
+            entities = nlp_data.get('entities', {})
+            locations = entities.get('locations', [])
+            
+            if locations:
+                location_events.append({
+                    'event': event,
+                    'locations': locations,
+                    'category': event.get('category', 'unknown'),
+                    'severity': nlp_data.get('severity_score', 0.0)
+                })
+        
+        if not location_events:
+            return []
+        
+        location_groups = defaultdict(list)
+        
+        for le in location_events:
+            for location in le['locations']:
+                location_groups[location].append(le)
+        
+        clusters = []
+        
+        for location, group in location_groups.items():
+            if len(group) >= self.min_cluster_size:
+                avg_severity = np.mean([g['severity'] for g in group])
+                
+                categories = [g['category'] for g in group]
+                most_common_category = Counter(categories).most_common(1)[0][0]
+                
+                clusters.append({
+                    'type': 'location_cluster',
+                    'location': location,
+                    'event_count': len(group),
+                    'category': most_common_category,
+                    'avg_severity': float(avg_severity),
+                    'severity': self._calculate_severity(avg_severity * 2),
+                    'detected_at': datetime.utcnow().isoformat()
+                })
+        
+        logger.info(f"Detected {len(clusters)} location clusters")
+        return clusters
+    
+    def detect_topic_clusters(self, events: List[Dict]) -> List[Dict]:
+        """Detect similar events using text clustering"""
+        if len(events) < self.min_cluster_size:
+            return []
+        
+        texts = []
+        valid_events = []
+        
+        for event in events:
+            text = f"{event.get('title', '')} {event.get('description', '')}"
+            if text.strip():
+                texts.append(text)
+                valid_events.append(event)
+        
+        if len(texts) < self.min_cluster_size:
+            return []
+        
+        try:
+            # Vectorize text
+            vectorizer = TfidfVectorizer(
+                max_features=100,
+                stop_words='english',
+                ngram_range=(1, 2)
+            )
+            
+            tfidf_matrix = vectorizer.fit_transform(texts)
+            
+            # Compute similarity matrix
+            similarity_matrix = cosine_similarity(tfidf_matrix)
+            
+            # Convert to distance matrix
+            distance_matrix = 1 - similarity_matrix
+            
+            # Cluster using DBSCAN
+            clustering = DBSCAN(
+                eps=0.5,
+                min_samples=self.min_cluster_size,
+                metric='precomputed'
+            )
+            
+            labels = clustering.fit_predict(distance_matrix)
+            
+            # Extract clusters
+            clusters = []
+            unique_labels = set(labels)
+            
+            for label in unique_labels:
+                if label == -1:  # Noise
+                    continue
+                
+                # Get cluster members
+                cluster_indices = np.where(labels == label)[0]
+                cluster_events = [valid_events[i] for i in cluster_indices]
+                
+                # Get cluster statistics
+                categories = [e.get('category', 'unknown') for e in cluster_events]
+                most_common_category = Counter(categories).most_common(1)[0][0]
+                
+                # Calculate severity
+                severities = []
+                for e in cluster_events:
+                    nlp_data = e.get('nlp_data', {})
+                    severities.append(nlp_data.get('severity_score', 0.0))
+                avg_severity = np.mean(severities)
+                
+                # Extract common keywords
+                cluster_texts = [texts[i] for i in cluster_indices]
+                keywords = self._extract_cluster_keywords(cluster_texts, vectorizer)
+                
+                clusters.append({
+                    'type': 'topic_cluster',
+                    'cluster_id': f'cluster_{label}',
+                    'event_count': len(cluster_events),
+                    'category': most_common_category,
+                    'keywords': keywords[:5],
+                    'avg_severity': float(avg_severity),
+                    'severity': self._calculate_severity(avg_severity * 2),
+                    'detected_at': datetime.utcnow().isoformat()
+                })
+            
+            logger.info(f"Detected {len(clusters)} topic clusters")
+            return clusters
+            
+        except Exception as e:
+            logger.error(f"Topic clustering failed: {e}")
+            return []
+    
+    def _extract_cluster_keywords(self, texts: List[str], 
+                                  vectorizer: TfidfVectorizer) -> List[str]:
+        """Extract top keywords from cluster"""
+        try:
+            tfidf_matrix = vectorizer.transform(texts)
+            mean_scores = np.asarray(tfidf_matrix.mean(axis=0)).ravel()
+            
+            feature_names = vectorizer.get_feature_names_out()
+            top_indices = mean_scores.argsort()[-10:][::-1]
+            
+            return [feature_names[i] for i in top_indices]
+        except:
+            return []
