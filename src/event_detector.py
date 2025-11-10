@@ -228,3 +228,104 @@ class EventDetector:
             return [feature_names[i] for i in top_indices]
         except:
             return []
+    
+    def detect_all_events(self, events: List[Dict]) -> Dict[str, List[Dict]]:
+        """Run all detection methods"""
+        logger.info(f"Running event detection on {len(events)} events")
+        
+        detected_events = {
+            'keyword_spikes': self.detect_keyword_spikes(events),
+            'location_clusters': self.detect_location_clusters(events),
+            'topic_clusters': self.detect_topic_clusters(events)
+        }
+        
+        total_detected = sum(len(v) for v in detected_events.values())
+        logger.info(f"Total detected events: {total_detected}")
+        
+        return detected_events
+    
+    def _get_baseline(self, category: str) -> float:
+        """Get historical baseline for category"""
+        if category not in self.historical_rates or not self.historical_rates[category]:
+            return 1.0  # Default baseline
+        
+        return np.median(self.historical_rates[category])
+    
+    def _update_baseline(self, category: str, count: int):
+        """Update historical baseline"""
+        self.historical_rates[category].append(count)
+        
+        # Keep only recent history
+        if len(self.historical_rates[category]) > self.baseline_window:
+            self.historical_rates[category].pop(0)
+    
+    def _calculate_severity(self, value: float) -> str:
+        """Calculate severity level"""
+        if value >= 5.0:
+            return 'critical'
+        elif value >= 3.0:
+            return 'high'
+        elif value >= 2.0:
+            return 'medium'
+        else:
+            return 'low'
+    
+    def filter_high_priority(self, detected_events: Dict[str, List[Dict]], 
+                            min_severity: str = 'medium') -> List[Dict]:
+        """Filter for high-priority events"""
+        severity_levels = {'low': 0, 'medium': 1, 'high': 2, 'critical': 3}
+        min_level = severity_levels.get(min_severity, 1)
+        
+        priority_events = []
+        
+        for event_type, events in detected_events.items():
+            for event in events:
+                severity = event.get('severity', 'low')
+                if severity_levels.get(severity, 0) >= min_level:
+                    priority_events.append(event)
+        
+        # Sort by severity
+        priority_events.sort(
+            key=lambda x: severity_levels.get(x.get('severity', 'low'), 0),
+            reverse=True
+        )
+        
+        return priority_events
+
+
+if __name__ == '__main__':
+    # quick test
+    detector = EventDetector(spike_threshold=2.0, min_cluster_size=3)
+    
+    test_events = [
+        {
+            'title': 'Earthquake hits California',
+            'description': 'Major seismic activity reported',
+            'category': 'disaster',
+            'nlp_data': {
+                'entities': {'locations': ['California']},
+                'severity_score': 0.8
+            }
+        },
+        {
+            'title': 'California earthquake aftermath',
+            'description': 'Damage assessment underway',
+            'category': 'disaster',
+            'nlp_data': {
+                'entities': {'locations': ['California']},
+                'severity_score': 0.7
+            }
+        },
+        {
+            'title': 'Earthquake emergency response',
+            'description': 'Emergency services mobilized',
+            'category': 'disaster',
+            'nlp_data': {
+                'entities': {'locations': ['California']},
+                'severity_score': 0.9
+            }
+        }
+    ]
+    
+    detected = detector.detect_all_events(test_events)
+    print("Detected events:", detected)
