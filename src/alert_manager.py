@@ -190,3 +190,132 @@ Severity: {cluster.get('severity', 'unknown').upper()}
 Related events detected on similar topics.
 Dashboard: http://localhost:8501
         """.strip()
+    
+    def send_alert(self, detected_event: Dict) -> Dict[str, bool]:
+        """Send alert via all enabled channels"""
+        severity = detected_event.get('severity', 'low')
+
+        if not self.should_alert(severity):
+            logger.info(f"Severity {severity} below threshold, skipping alert")
+            return {'slack': False, 'email': False}
+
+        detection_type = detected_event.get('type', 'unknown')
+
+        if detection_type == 'keyword_spike':
+            message = self.format_keyword_spike_alert(detected_event)
+            subject = f"Keyword Spike: {detected_event.get('keyword', 'Unknown')}"
+        elif detection_type == 'location_cluster':
+            message = self.format_location_cluster_alert(detected_event)
+            subject = f"Location Alert: {detected_event.get('location', 'Unknown')}"
+        elif detection_type == 'topic_cluster':
+            message = self.format_topic_cluster_alert(detected_event)
+            subject = f"Topic Cluster: {detected_event.get('category', 'Unknown')}"
+        else:
+            message = f"Detected event: {detected_event}"
+            subject = "Event Alert"
+
+        results = {}
+
+        if 'slack' in self.enabled_channels:
+            results['slack'] = self.send_slack_alert(message, severity)
+
+        if 'email' in self.enabled_channels:
+            results['email'] = self.send_email_alert(subject, message, severity)
+
+        return results
+
+    def send_batch_alerts(self, detected_events: List[Dict]) -> Dict:
+        """Send alerts for a batch of events"""
+        if not detected_events:
+            return {'sent': 0, 'failed': 0}
+        
+        sent = 0
+        failed = 0
+        
+        for event in detected_events:
+            try:
+                results = self.send_alert(event)
+                if any(results.values()):
+                    sent += 1
+                else:
+                    failed += 1
+            except Exception as e:
+                logger.error(f"Failed to send alert: {e}")
+                failed += 1
+        
+        logger.info(f"Sent {sent} alerts, {failed} failed")
+        return {'sent': sent, 'failed': failed}
+    
+    def send_summary_alert(self, summary: Dict) -> bool:
+        """Send summary of detected events"""
+        message = f"""
+📊 EVENT DETECTION SUMMARY
+
+Time Period: {summary.get('period', 'Last 24 hours')}
+Total Events Processed: {summary.get('total_events', 0)}
+Detected Events: {summary.get('detected_count', 0)}
+
+By Severity:
+- Critical: {summary.get('critical', 0)}
+- High: {summary.get('high', 0)}
+- Medium: {summary.get('medium', 0)}
+- Low: {summary.get('low', 0)}
+
+Top Categories:
+{self._format_top_categories(summary.get('top_categories', {}))}
+
+Dashboard: http://localhost:8501
+        """.strip()
+        
+        results = []
+
+        if 'slack' in self.enabled_channels:
+            results.append(self.send_slack_alert(message, 'medium'))
+
+        if 'email' in self.enabled_channels:
+            results.append(self.send_email_alert('Event Detection Summary', message, 'medium'))
+
+        return any(results)
+
+    def _format_top_categories(self, categories: Dict) -> str:
+        """Format categories for summary"""
+        if not categories:
+            return "No categories"
+
+        lines = []
+        for category, count in list(categories.items())[:5]:
+            lines.append(f"- {category}: {count}")
+
+        return '\n'.join(lines)
+
+
+# singleton pattern
+_alert_manager = None
+
+
+def get_alert_manager() -> AlertManager:
+    """Get the alert manager instance"""
+    global _alert_manager
+    if _alert_manager is None:
+        _alert_manager = AlertManager()
+    return _alert_manager
+
+
+if __name__ == '__main__':
+    from datetime import datetime
+
+    # quick test
+    manager = AlertManager()
+
+    test_spike = {
+        'type': 'keyword_spike',
+        'category': 'disaster',
+        'keyword': 'earthquake',
+        'count': 150,
+        'baseline': 20.0,
+        'spike_ratio': 7.5,
+        'severity': 'critical'
+    }
+
+    results = manager.send_alert(test_spike)
+    print(f"Alert results: {results}")
