@@ -3,6 +3,7 @@ Database operations - handles all Postgres reads/writes
 """
 
 import os
+import json
 import logging
 from typing import List, Dict, Optional
 from datetime import datetime, timedelta
@@ -145,19 +146,20 @@ class StorageManager:
                     event.get('event_id'),
                     event.get('source'),
                     event.get('source_type'),
-                    event.get('title', '')[:500],
-                    event.get('description', '')[:1000],
-                    event.get('content', '')[:2000],
-                    event.get('url', '')[:500],
-                    event.get('published_at'),
-                    event.get('timestamp'),
+                    (event.get('title') or '')[:500],
+                    (event.get('description') or '')[:1000],
+                    (event.get('content') or '')[:2000],
+                    (event.get('url') or '')[:500],
+                    event.get('published_at') or None,
+                    event.get('timestamp') or None,
                     nlp_data.get('category', 'unknown'),
                     nlp_data.get('category_confidence', 0.0),
                     nlp_data.get('crisis_level', 'low'),
                     nlp_data.get('severity_score', 0.0),
-                    str(entities.get('persons', [])),
-                    str(entities.get('organizations', [])),
-                    str(entities.get('locations', [])),
+                    # JSON, not repr(): the dashboard parses these with json.loads
+                    json.dumps(entities.get('persons', [])),
+                    json.dumps(entities.get('organizations', [])),
+                    json.dumps(entities.get('locations', [])),
                     nlp_data.get('word_count', 0)
                 ))
 
@@ -169,8 +171,6 @@ class StorageManager:
 
     def insert_detected_event(self, detected_event: Dict) -> int:
         """Store a detected event (spike, cluster, etc)"""
-        import json
-        
         with self.get_connection() as conn:
             cursor = conn.cursor()
             
