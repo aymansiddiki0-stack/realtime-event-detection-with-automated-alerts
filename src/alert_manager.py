@@ -105,6 +105,10 @@ class AlertManager:
             msg['From'] = self.smtp_user
             msg['To'] = self.alert_email
 
+            # Precomputed because backslashes are not allowed inside f-string
+            # expressions before Python 3.12, and the images run 3.10.
+            html_message = message.replace('\n', '<br>')
+
             html = f"""
             <html>
             <head></head>
@@ -116,7 +120,7 @@ class AlertManager:
                     </div>
                     <div style="padding: 20px; background-color: #f5f5f5;">
                         <p style="font-size: 16px; line-height: 1.6;">
-                            {message.replace('\n', '<br>')}
+                            {html_message}
                         </p>
                     </div>
                     <div style="padding: 10px; text-align: center; font-size: 12px; color: #666;">
