@@ -1,20 +1,17 @@
 """
-Spark streaming job - reads from Kafka, runs NLP, writes to Postgres
+Event processor - consumes raw events from Kafka, runs NLP, writes to Postgres
 """
 
 import os
 import json
+import time
+import signal
 import logging
 import threading
-from pyspark.sql import SparkSession
-from pyspark.sql.functions import (
-    from_json, col, udf, current_timestamp, to_timestamp, lit
-)
-from pyspark.sql.types import (
-    StructType, StructField, StringType, IntegerType,
-    DoubleType, TimestampType, MapType, ArrayType
-)
-from prometheus_client import Counter, Gauge, Histogram, start_http_server
+from typing import Dict, List, Optional
+from kafka import KafkaConsumer
+from kafka.errors import KafkaError
+from prometheus_client import Counter, Histogram, start_http_server
 
 logging.basicConfig(
     level=logging.INFO,
@@ -23,29 +20,50 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Metrics for tracking performance
-batches_processed = Counter('spark_batches_processed_total', 'Total batches processed')
-batches_failed = Counter('spark_batches_failed_total', 'Total batches failed')
-events_processed = Counter('spark_events_processed_total', 'Total events processed')
-events_written_db = Counter('spark_events_written_db_total', 'Total events written to database')
-batch_processing_duration = Histogram('spark_batch_processing_seconds', 'Time spent processing batches')
+batches_processed = Counter('processor_batches_total', 'Total batches processed')
+batches_failed = Counter('processor_batches_failed_total', 'Total batches failed')
+events_consumed = Counter('processor_events_consumed_total', 'Total events consumed from Kafka')
+events_written_db = Counter('processor_events_written_total', 'Total events written to database')
+duplicates_skipped = Counter('processor_duplicates_skipped_total', 'Events skipped as duplicates on insert')
+messages_invalid = Counter('processor_messages_invalid_total', 'Messages dropped as undecodable')
+batch_processing_duration = Histogram('processor_batch_seconds', 'Time spent processing batches')
 nlp_processing_duration = Histogram('nlp_processing_seconds', 'Time spent on NLP processing')
 db_write_duration = Histogram('db_write_seconds', 'Time spent writing to database')
-stream_lag = Gauge('spark_stream_lag_seconds', 'Stream processing lag')
 
 
-class StreamProcessor:
-    """Handles streaming from Kafka to Postgres with NLP processing"""
+class EventConsumer:
+    """Consumes raw events, enriches them with NLP, and persists them"""
 
-    def __init__(self):
-        self.spark = self._create_spark_session()
+    def __init__(self, nlp_processor=None, storage=None):
         self.kafka_servers = os.getenv('KAFKA_BOOTSTRAP_SERVERS', 'localhost:9092')
-        self.postgres_url = self._get_postgres_url()
+        self.topic = 'raw-events'
+        self.group_id = 'event-processor'
 
-        # Metrics server runs in the background
+        # Injectable for tests; loaded lazily otherwise because the NLP
+        # stack (spaCy + transformers) takes tens of seconds to import.
+        self._nlp = nlp_processor
+        self._storage = storage
+
+        self._running = True
+
         metrics_thread = threading.Thread(target=self._start_metrics_server, daemon=True)
         metrics_thread.start()
 
-        logger.info("Stream processor initialized")
+        logger.info("Event consumer initialized")
+
+    @property
+    def nlp(self):
+        if self._nlp is None:
+            from nlp_module import get_nlp_processor
+            self._nlp = get_nlp_processor()
+        return self._nlp
+
+    @property
+    def storage(self):
+        if self._storage is None:
+            from storage_manager import get_storage_manager
+            self._storage = get_storage_manager()
+        return self._storage
 
     def _start_metrics_server(self):
         """Start Prometheus metrics HTTP server"""
@@ -54,209 +72,113 @@ class StreamProcessor:
             logger.info("Prometheus metrics server started on port 8000")
         except Exception as e:
             logger.error(f"Failed to start metrics server: {e}")
-    
-    def _create_spark_session(self) -> SparkSession:
-        """Set up Spark with streaming configs"""
-        spark = SparkSession.builder \
-            .appName("RealTimeEventProcessor") \
-            .config("spark.sql.streaming.checkpointLocation", "/tmp/checkpoint") \
-            .config("spark.sql.shuffle.partitions", "4") \
-            .config("spark.streaming.stopGracefullyOnShutdown", "true") \
-            .getOrCreate()
 
-        spark.sparkContext.setLogLevel("WARN")
-        logger.info("Spark session created")
+    def _create_consumer(self) -> KafkaConsumer:
+        """Connect to Kafka with retries"""
+        max_retries = 5
+        retry_delay = 5
 
-        return spark
-
-    def _get_postgres_url(self) -> str:
-        """Build JDBC connection string"""
-        host = os.getenv('POSTGRES_HOST', 'localhost')
-        port = os.getenv('POSTGRES_PORT', '5432')
-        database = os.getenv('POSTGRES_DB', 'events_db')
-        user = os.getenv('POSTGRES_USER', 'eventpipeline')
-        password = os.getenv('POSTGRES_PASSWORD', 'pipeline_secret_2024')
-        
-        return f"jdbc:postgresql://{host}:{port}/{database}?user={user}&password={password}"
-    
-    def define_schema(self) -> StructType:
-        """Schema for raw Kafka events"""
-        return StructType([
-            StructField("event_id", StringType(), False),
-            StructField("source", StringType(), True),
-            StructField("source_type", StringType(), True),
-            StructField("title", StringType(), True),
-            StructField("description", StringType(), True),
-            StructField("content", StringType(), True),
-            StructField("url", StringType(), True),
-            StructField("published_at", StringType(), True),
-            StructField("timestamp", StringType(), True),
-            StructField("ingestion_time", StringType(), True),
-            StructField("source_name", StringType(), True),
-            StructField("subreddit", StringType(), True),
-            StructField("score", IntegerType(), True),
-            StructField("num_comments", IntegerType(), True),
-            StructField("language", StringType(), True),
-            StructField("seendate", StringType(), True),
-        ])
-
-    def define_output_schema(self) -> StructType:
-        """Schema for processed events with NLP fields"""
-        return StructType([
-            StructField("event_id", StringType(), True),
-            StructField("source", StringType(), True),
-            StructField("source_type", StringType(), True),
-            StructField("title", StringType(), True),
-            StructField("description", StringType(), True),
-            StructField("content", StringType(), True),
-            StructField("url", StringType(), True),
-            StructField("published_at", StringType(), True),
-            StructField("timestamp", StringType(), True),
-            StructField("category", StringType(), True),
-            StructField("category_confidence", DoubleType(), True),
-            StructField("crisis_level", StringType(), True),
-            StructField("severity_score", DoubleType(), True),
-            StructField("persons", StringType(), True),
-            StructField("organizations", StringType(), True),
-            StructField("locations", StringType(), True),
-            StructField("word_count", IntegerType(), True),
-        ])
-    
-    def read_from_kafka(self):
-        """Stream events from Kafka topic"""
-        logger.info(f"Reading from Kafka: {self.kafka_servers}")
-
-        raw_stream = self.spark \
-            .readStream \
-            .format("kafka") \
-            .option("kafka.bootstrap.servers", self.kafka_servers) \
-            .option("subscribe", "raw-events") \
-            .option("startingOffsets", "latest") \
-            .option("maxOffsetsPerTrigger", "20") \
-            .load()
-
-        schema = self.define_schema()
-
-        parsed_stream = raw_stream.select(
-            from_json(col("value").cast("string"), schema).alias("data")
-        ).select("data.*")
-
-        logger.info("Kafka stream configured")
-        return parsed_stream
-
-    def process_nlp(self, batch_df, batch_id):
-        """Process each batch with NLP and write to DB"""
-        if batch_df.isEmpty():
-            return
-
-        with batch_processing_duration.time():
-            record_count = batch_df.count()
-            logger.info(f"Processing batch {batch_id} with {record_count} records")
-            events_processed.inc(record_count)
-
+        for attempt in range(max_retries):
             try:
-                # Import here to avoid Spark serialization issues
-                from nlp_module import get_nlp_processor
+                consumer = KafkaConsumer(
+                    self.topic,
+                    bootstrap_servers=self.kafka_servers.split(','),
+                    group_id=self.group_id,
+                    # Offsets are committed manually after the database write,
+                    # so a crash mid-batch replays the batch instead of losing it.
+                    # The ON CONFLICT insert makes replays idempotent.
+                    enable_auto_commit=False,
+                    auto_offset_reset='earliest',
+                    # Transformer inference is slow on CPU; keep polls small and
+                    # the poll interval generous so the broker doesn't evict us
+                    # from the group while a batch is still being classified.
+                    max_poll_records=20,
+                    max_poll_interval_ms=600000,
+                )
+                logger.info(f"Connected to Kafka at {self.kafka_servers}")
+                return consumer
+            except KafkaError as e:
+                logger.error(f"Kafka connection attempt {attempt + 1} failed: {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                else:
+                    raise
 
-                events = [row.asDict() for row in batch_df.collect()]
+    def _decode(self, raw_value: bytes) -> Optional[Dict]:
+        """Decode a Kafka message, dropping anything unparseable"""
+        try:
+            return json.loads(raw_value.decode('utf-8'))
+        except (ValueError, UnicodeDecodeError) as e:
+            messages_invalid.inc()
+            logger.warning(f"Dropping undecodable message: {e}")
+            return None
 
-                # Run NLP on the batch
-                with nlp_processing_duration.time():
-                    nlp_processor = get_nlp_processor()
-                    processed_events = nlp_processor.batch_process(events)
+    def handle_batch(self, events: List[Dict]) -> int:
+        """Run NLP on a batch and persist it; returns rows actually inserted"""
+        with nlp_processing_duration.time():
+            processed_events = self.nlp.batch_process(events)
 
-                if processed_events:
-                    # Flatten the nested NLP results for DB storage
-                    flattened_events = []
-                    for event in processed_events:
-                        nlp_data = event.get('nlp_data', {})
-                        entities = nlp_data.get('entities', {})
+        with db_write_duration.time():
+            inserted = self.storage.insert_events(processed_events)
 
-                        flattened = {
-                            'event_id': event.get('event_id'),
-                            'source': event.get('source'),
-                            'source_type': event.get('source_type'),
-                            'title': (event.get('title') or '')[:500],
-                            'description': (event.get('description') or '')[:1000],
-                            'content': (event.get('content') or '')[:2000],
-                            'url': (event.get('url') or '')[:500],
-                            'published_at': event.get('published_at'),
-                            'timestamp': event.get('timestamp'),
-                            'category': nlp_data.get('category', 'unknown'),
-                            'category_confidence': nlp_data.get('category_confidence', 0.0),
-                            'crisis_level': nlp_data.get('crisis_level', 'low'),
-                            'severity_score': nlp_data.get('severity_score', 0.0),
-                            'persons': json.dumps(entities.get('persons', [])),
-                            'organizations': json.dumps(entities.get('organizations', [])),
-                            'locations': json.dumps(entities.get('locations', [])),
-                            'word_count': nlp_data.get('word_count', 0),
-                        }
-                        flattened_events.append(flattened)
+        skipped = len(processed_events) - inserted
+        events_written_db.inc(inserted)
+        if skipped > 0:
+            duplicates_skipped.inc(skipped)
 
-                    output_schema = self.define_output_schema()
-                    processed_df = self.spark.createDataFrame(flattened_events, schema=output_schema)
+        logger.info(f"Batch done: {inserted} inserted, {skipped} duplicates skipped")
+        return inserted
 
-                    # Convert string timestamps to proper timestamp type
-                    processed_df = processed_df \
-                        .withColumn("published_at", to_timestamp(col("published_at"))) \
-                        .withColumn("timestamp", to_timestamp(col("timestamp"))) \
-                        .withColumn("processed_at", current_timestamp())
-
-                    # Write to Postgres
-                    with db_write_duration.time():
-                        processed_df.write \
-                            .format("jdbc") \
-                            .option("url", self.postgres_url) \
-                            .option("dbtable", "events") \
-                            .option("driver", "org.postgresql.Driver") \
-                            .mode("append") \
-                            .save()
-
-                        events_written_db.inc(len(flattened_events))
-                        logger.info(f"Batch {batch_id}: Wrote {len(flattened_events)} events to database")
-
-                batches_processed.inc()
-
-            except Exception as e:
-                logger.error(f"Failed to write batch {batch_id} to database: {e}")
-                batches_failed.inc()
-    
-    def write_to_postgres(self, processed_stream):
-        """Set up streaming write to Postgres"""
-        query = processed_stream.writeStream \
-            .foreachBatch(self.process_nlp) \
-            .outputMode("append") \
-            .trigger(processingTime='30 seconds') \
-            .option("checkpointLocation", "/tmp/checkpoint/events") \
-            .start()
-
-        logger.info("Started writing to PostgreSQL")
-        return query
+    def stop(self, *args):
+        logger.info("Shutdown requested")
+        self._running = False
 
     def run(self):
-        """Start the streaming pipeline"""
-        logger.info("Starting stream processor.")
+        """Main loop: poll, enrich, persist, commit"""
+        consumer = self._create_consumer()
+
+        signal.signal(signal.SIGTERM, self.stop)
+        signal.signal(signal.SIGINT, self.stop)
+
+        logger.info(f"Consuming from '{self.topic}' as group '{self.group_id}'")
 
         try:
-            stream = self.read_from_kafka()
+            while self._running:
+                records = consumer.poll(timeout_ms=5000)
+                if not records:
+                    continue
 
-            query = self.write_to_postgres(stream)
+                events = []
+                for partition_records in records.values():
+                    for record in partition_records:
+                        event = self._decode(record.value)
+                        if event is not None:
+                            events.append(event)
 
-            logger.info("Stream processor running. Press Ctrl+C to stop.")
-            query.awaitTermination()
+                events_consumed.inc(sum(len(v) for v in records.values()))
 
-        except KeyboardInterrupt:
-            logger.info("Shutting down stream processor.")
-        except Exception as e:
-            logger.error(f"Stream processor error: {e}")
-            raise
+                if not events:
+                    consumer.commit()
+                    continue
+
+                try:
+                    with batch_processing_duration.time():
+                        self.handle_batch(events)
+                    consumer.commit()
+                    batches_processed.inc()
+                except Exception as e:
+                    # Offsets stay uncommitted so the batch is redelivered;
+                    # duplicates from partial writes are absorbed by ON CONFLICT.
+                    batches_failed.inc()
+                    logger.error(f"Batch failed, will retry after redelivery: {e}")
+                    time.sleep(5)
         finally:
-            self.spark.stop()
-            logger.info("Stream processor stopped")
+            consumer.close()
+            logger.info("Consumer closed")
 
 
 def main():
-    processor = StreamProcessor()
+    processor = EventConsumer()
     processor.run()
 
 
