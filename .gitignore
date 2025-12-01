@@ -41,9 +41,6 @@ data/
 Thumbs.db
 *.pid
 *.sock
-metastore_db/
-derby.log
-spark-warehouse/
 airflow.cfg
 airflow.db
 airflow-webserver.pid
@@ -51,4 +48,3 @@ airflow-webserver.pid
 *.sqlite
 /tmp/
 *.tmp
-checkpoint/

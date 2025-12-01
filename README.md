@@ -6,7 +6,7 @@ The pipeline connects to NewsAPI, Reddit, and GDELT, processes streams with NLP 
 ### Tech Stack
 - Python 3.10+
 - APIs: NewsAPI, Reddit, GDELT
-- Processing: Apache Kafka, Apache Spark
+- Processing: Apache Kafka
 - NLP/ML: spaCy, Hugging Face Transformers, scikit-learn (DBSCAN, TF-IDF)
 - Storage: PostgreSQL, Redis, Elasticsearch
 - Orchestration: Airflow, Docker Compose
@@ -16,7 +16,7 @@ The pipeline connects to NewsAPI, Reddit, and GDELT, processes streams with NLP 
 
 ### Key Features
 - Ingests real-time news data from NewsAPI, Reddit, and GDELT using Kafka.
-- ETL Pipeline: Spark processes streams with NLP (entity extraction, classification, sentiment).
+- ETL Pipeline: A Kafka consumer enriches events with NLP (entity extraction, classification, severity scoring).
 - Event Detection: Keyword spike detection, TF-IDF clustering, and DBSCAN grouping.
 - Alerts: Slack and email notifications for critical events and daily summaries.
 - Dashboard: Interactive Streamlit interface with KPIs, trend visualizations, and event filtering.
@@ -35,7 +35,7 @@ The pipeline connects to NewsAPI, Reddit, and GDELT, processes streams with NLP 
 
 ### This starts:
 - Kafka broker for event streaming
-- Spark workers for NLP processing
+- Stream processor for NLP enrichment
 - PostgreSQL + Redis + Elasticsearch for storage
 - Airflow for orchestration
 - Streamlit dashboard
@@ -52,7 +52,6 @@ The pipeline connects to NewsAPI, Reddit, and GDELT, processes streams with NLP 
 #### Access Points
 - Dashboard: http://localhost:8501
 - Airflow: http://localhost:8081 
-- Spark UI: http://localhost:8080
 - Grafana: http://localhost:3000 
 
 #### Configuration

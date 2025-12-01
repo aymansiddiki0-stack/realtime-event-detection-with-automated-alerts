@@ -28,7 +28,7 @@ setup_credentials() {
 }
 
 create_directories() {
-    mkdir -p logs data checkpoint
+    mkdir -p logs
 }
 
 pull_images() {
