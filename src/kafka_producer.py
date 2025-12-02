@@ -8,6 +8,7 @@ import time
 import logging
 from datetime import datetime
 from typing import Dict, List, Optional
+from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
 from kafka import KafkaProducer
 from kafka.errors import KafkaError
 import requests
@@ -34,6 +35,43 @@ messages_failed_total = Counter('kafka_messages_failed_total', 'Total failed mes
 events_fetched_total = Counter('events_fetched_total', 'Total events fetched from sources', ['source'])
 fetch_duration_seconds = Histogram('fetch_duration_seconds', 'Time spent fetching from sources', ['source'])
 active_sources = Gauge('active_data_sources', 'Number of active data sources')
+
+
+# Analytics parameters that vary between fetches of the same article and
+# would otherwise produce distinct identities for identical content.
+TRACKING_PARAMS = {
+    'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content',
+    'utm_id', 'utm_name', 'utm_reader', 'fbclid', 'gclid', 'msclkid',
+    'mc_cid', 'mc_eid', 'ref', 'ref_src', 'ocid', 'cmpid', 'icid',
+    'igshid', 'spm', '_ga',
+}
+
+
+def normalize_url(url: str) -> str:
+    """Reduce a URL to a canonical form for identity purposes"""
+    if not url:
+        return ''
+
+    parts = urlsplit(url.strip())
+
+    scheme = parts.scheme.lower() or 'https'
+    netloc = parts.netloc.lower()
+
+    # Same host, same content: strip the www prefix and default ports.
+    if netloc.startswith('www.'):
+        netloc = netloc[4:]
+    if netloc.endswith(':80') or netloc.endswith(':443'):
+        netloc = netloc.rsplit(':', 1)[0]
+
+    path = parts.path.rstrip('/') or '/'
+
+    query = urlencode(sorted(
+        (k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True)
+        if k.lower() not in TRACKING_PARAMS
+    ))
+
+    # Fragments never identify a distinct article.
+    return urlunsplit((scheme, netloc, path, query, ''))
 
 
 class EventProducer:
