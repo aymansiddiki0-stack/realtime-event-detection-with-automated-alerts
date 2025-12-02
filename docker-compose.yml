@@ -28,7 +28,8 @@ services:
     image: confluentinc/cp-kafka:7.5.0
     container_name: kafka
     depends_on:
-      - zookeeper
+      zookeeper:
+        condition: service_healthy
     ports:
       - "9092:9092"
       - "29092:29092"
@@ -122,8 +123,10 @@ services:
       dockerfile: Dockerfile
     container_name: kafka-producer
     depends_on:
-      - kafka
-      - postgres
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
     environment:
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
       - POSTGRES_HOST=postgres
@@ -149,8 +152,10 @@ services:
       dockerfile: Dockerfile
     container_name: stream-processor
     depends_on:
-      - kafka
-      - postgres
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
     environment:
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
       - POSTGRES_HOST=postgres
@@ -193,7 +198,8 @@ services:
       dockerfile: Dockerfile.airflow
     container_name: airflow-init
     depends_on:
-      - airflow-postgres
+      airflow-postgres:
+        condition: service_healthy
     environment:
       - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
       - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@airflow-postgres/airflow
@@ -229,9 +235,12 @@ services:
       dockerfile: Dockerfile.airflow
     container_name: airflow-webserver
     depends_on:
-      - airflow-init
-      - airflow-postgres
-      - redis
+      airflow-init:
+        condition: service_completed_successfully
+      airflow-postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
       - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
       - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@airflow-postgres/airflow
@@ -261,9 +270,12 @@ services:
       dockerfile: Dockerfile.airflow
     container_name: airflow-scheduler
     depends_on:
-      - airflow-init
-      - airflow-postgres
-      - redis
+      airflow-init:
+        condition: service_completed_successfully
+      airflow-postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
       - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
       - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@airflow-postgres/airflow
@@ -289,7 +301,8 @@ services:
       dockerfile: Dockerfile
     container_name: dashboard
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     environment:
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
