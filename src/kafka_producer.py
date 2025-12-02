@@ -5,6 +5,7 @@ Data ingestion from news APIs - Kafka Pulls from NewsAPI, Reddit, and GDELT ever
 import os
 import json
 import time
+import hashlib
 import logging
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -33,6 +34,7 @@ logger = logging.getLogger(__name__)
 messages_sent_total = Counter('kafka_messages_sent_total', 'Total messages sent to Kafka', ['source'])
 messages_failed_total = Counter('kafka_messages_failed_total', 'Total failed messages', ['source'])
 events_fetched_total = Counter('events_fetched_total', 'Total events fetched from sources', ['source'])
+events_skipped_total = Counter('events_skipped_total', 'Events dropped for lacking a usable identity', ['source'])
 fetch_duration_seconds = Histogram('fetch_duration_seconds', 'Time spent fetching from sources', ['source'])
 active_sources = Gauge('active_data_sources', 'Number of active data sources')
 
@@ -72,6 +74,21 @@ def normalize_url(url: str) -> str:
 
     # Fragments never identify a distinct article.
     return urlunsplit((scheme, netloc, path, query, ''))
+
+
+def make_event_id(source: str, identifier: str) -> str:
+    """Build a stable event ID from a source-scoped identifier.
+
+    Deterministic across processes and fetch cycles: Python's hash() is
+    randomized per process, and anything time-based defeats deduplication.
+    """
+    digest = hashlib.sha256(identifier.encode('utf-8')).hexdigest()[:32]
+    return f"{source}_{digest}"
+
+
+def url_event_id(source: str, url: str) -> str:
+    """Event ID derived from a normalized article URL"""
+    return make_event_id(source, normalize_url(url))
 
 
 class EventProducer:
@@ -173,16 +190,21 @@ class EventProducer:
                 events = []
 
                 for article in articles:
+                    url = article.get('url', '')
+                    if not url:
+                        events_skipped_total.labels(source='newsapi').inc()
+                        continue
+
                     event = {
                         'source': 'newsapi',
                         'title': article.get('title', ''),
                         'description': article.get('description', ''),
                         'content': article.get('content', ''),
-                        'url': article.get('url', ''),
+                        'url': url,
                         'published_at': article.get('publishedAt', ''),
                         'source_name': article.get('source', {}).get('name', ''),
                         'timestamp': datetime.utcnow().isoformat(),
-                        'event_id': f"news_{hash(article.get('url', ''))}_{int(time.time())}"
+                        'event_id': url_event_id('news', url)
                     }
                     events.append(event)
 
@@ -220,7 +242,8 @@ class EventProducer:
                             'num_comments': post.num_comments,
                             'created_utc': datetime.fromtimestamp(post.created_utc).isoformat(),
                             'timestamp': datetime.utcnow().isoformat(),
-                            'event_id': f"reddit_{post.id}_{int(time.time())}"
+                            # Reddit post IDs are already stable and unique.
+                            'event_id': make_event_id('reddit', post.id)
                         }
                         events.append(event)
 
@@ -252,14 +275,19 @@ class EventProducer:
                 events = []
 
                 for article in articles:
+                    url = article.get('url', '')
+                    if not url:
+                        events_skipped_total.labels(source='gdelt').inc()
+                        continue
+
                     event = {
                         'source': 'gdelt',
                         'title': article.get('title', ''),
-                        'url': article.get('url', ''),
+                        'url': url,
                         'language': article.get('language', ''),
                         'seendate': article.get('seendate', ''),
                         'timestamp': datetime.utcnow().isoformat(),
-                        'event_id': f"gdelt_{hash(article.get('url', ''))}_{int(time.time())}"
+                        'event_id': url_event_id('gdelt', url)
                     }
                     events.append(event)
 
@@ -283,7 +311,7 @@ class EventProducer:
                 'published_at': datetime.utcnow().isoformat(),
                 'source_name': 'Mock News',
                 'timestamp': datetime.utcnow().isoformat(),
-                'event_id': f"mock_news_{int(time.time())}_1"
+                'event_id': url_event_id('news', 'https://example.com/earthquake-1')
             },
             {
                 'source': 'newsapi',
@@ -294,7 +322,7 @@ class EventProducer:
                 'published_at': datetime.utcnow().isoformat(),
                 'source_name': 'Mock Tech News',
                 'timestamp': datetime.utcnow().isoformat(),
-                'event_id': f"mock_news_{int(time.time())}_2"
+                'event_id': url_event_id('news', 'https://example.com/ai-breakthrough')
             }
         ]
         return mock_events
@@ -312,7 +340,7 @@ class EventProducer:
                 'num_comments': 234,
                 'created_utc': datetime.utcnow().isoformat(),
                 'timestamp': datetime.utcnow().isoformat(),
-                'event_id': f"mock_reddit_{int(time.time())}_1"
+                'event_id': make_event_id('reddit', 'mock1')
             }
         ]
         return mock_posts
