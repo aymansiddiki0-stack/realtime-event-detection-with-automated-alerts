@@ -40,13 +40,11 @@ build_images() {
 }
 
 start_services() {
-    docker-compose up -d zookeeper kafka postgres redis
-    sleep 30
+    # Compose waits on healthchecks, so services come up in dependency order.
     docker-compose up -d
 }
 
 check_health() {
-    sleep 10
     docker-compose ps
 }
 
