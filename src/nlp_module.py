@@ -13,6 +13,38 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Canonical category vocabulary. Every classification path must emit one of
+# these values so downstream grouping, filtering and spike baselines see a
+# single namespace.
+CATEGORIES = (
+    'natural_disaster',
+    'conflict',
+    'health',
+    'politics',
+    'technology',
+    'economy',
+    'climate',
+    'security',
+    'sports',
+    'entertainment',
+    'other',
+)
+
+# The zero-shot model is prompted with natural-language labels because short
+# slugs classify poorly; results are mapped back to the canonical vocabulary.
+ZERO_SHOT_LABELS = {
+    'natural disaster': 'natural_disaster',
+    'political event': 'politics',
+    'conflict or violence': 'conflict',
+    'technology': 'technology',
+    'health or disease outbreak': 'health',
+    'economy or business': 'economy',
+    'climate or environment': 'climate',
+    'terrorism or security': 'security',
+    'sports': 'sports',
+    'entertainment': 'entertainment',
+}
+
 
 class NLPProcessor:
     """Main NLP pipeline for processing events"""
@@ -37,22 +69,11 @@ class NLPProcessor:
             logger.warning(f"Failed to load classifier: {e}")
             self.classifier = None
 
-        self.categories = [
-            'natural disaster',
-            'political event',
-            'conflict/violence',
-            'technology',
-            'health/pandemic',
-            'economy/business',
-            'climate/environment',
-            'terrorism/security',
-            'sports',
-            'entertainment'
-        ]
+        self.categories = list(ZERO_SHOT_LABELS)
 
-        # Keywords for crisis detection
+        # Keywords for the fallback classifier, keyed by canonical category
         self.crisis_keywords = {
-            'disaster': [
+            'natural_disaster': [
                 'earthquake', 'tsunami', 'hurricane', 'tornado', 'flood',
                 'wildfire', 'drought', 'avalanche', 'volcano', 'landslide'
             ],
@@ -64,7 +85,7 @@ class NLPProcessor:
                 'outbreak', 'pandemic', 'epidemic', 'virus', 'disease',
                 'infection', 'hospital', 'death', 'emergency'
             ],
-            'political': [
+            'politics': [
                 'election', 'vote', 'parliament', 'president', 'minister',
                 'government', 'policy', 'legislation', 'democracy'
             ]
@@ -133,10 +154,10 @@ class NLPProcessor:
                 multi_label=False
             )
 
-            category = result['labels'][0]
+            label = result['labels'][0]
             confidence = result['scores'][0]
 
-            return category, confidence
+            return ZERO_SHOT_LABELS.get(label, 'other'), confidence
 
         except Exception as e:
             logger.warning(f"Classification failed, using keyword fallback: {e}")
