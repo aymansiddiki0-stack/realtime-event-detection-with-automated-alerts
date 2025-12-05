@@ -1,21 +1,22 @@
 # Alert Configuration
+# Category keys use the canonical vocabulary defined in src/nlp_module.py.
 alert_thresholds:
-  disaster:
+  natural_disaster:
     spike_factor: 3.0
     min_mentions: 50
     severity: "high"
-  
+
   conflict:
     spike_factor: 2.5
     min_mentions: 30
     severity: "high"
-  
+
   health:
     spike_factor: 3.5
     min_mentions: 40
     severity: "critical"
-  
-  political:
+
+  politics:
     spike_factor: 2.0
     min_mentions: 25
     severity: "medium"
