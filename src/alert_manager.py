@@ -313,7 +313,7 @@ if __name__ == '__main__':
 
     test_spike = {
         'type': 'keyword_spike',
-        'category': 'disaster',
+        'category': 'natural_disaster',
         'keyword': 'earthquake',
         'count': 150,
         'baseline': 20.0,

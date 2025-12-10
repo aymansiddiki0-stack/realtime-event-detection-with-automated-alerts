@@ -301,7 +301,7 @@ if __name__ == '__main__':
         {
             'title': 'Earthquake hits California',
             'description': 'Major seismic activity reported',
-            'category': 'disaster',
+            'category': 'natural_disaster',
             'nlp_data': {
                 'entities': {'locations': ['California']},
                 'severity_score': 0.8
@@ -310,7 +310,7 @@ if __name__ == '__main__':
         {
             'title': 'California earthquake aftermath',
             'description': 'Damage assessment underway',
-            'category': 'disaster',
+            'category': 'natural_disaster',
             'nlp_data': {
                 'entities': {'locations': ['California']},
                 'severity_score': 0.7
@@ -319,7 +319,7 @@ if __name__ == '__main__':
         {
             'title': 'Earthquake emergency response',
             'description': 'Emergency services mobilized',
-            'category': 'disaster',
+            'category': 'natural_disaster',
             'nlp_data': {
                 'entities': {'locations': ['California']},
                 'severity_score': 0.9
