@@ -24,7 +24,8 @@ def test_clean_text(nlp_processor):
     
     assert "http" not in clean
     assert "@" not in clean
-    assert clean == "Check this out and email"
+    # Sentence punctuation is deliberately preserved
+    assert clean == "Check this out! and email"
 
 
 def test_extract_entities(nlp_processor):
