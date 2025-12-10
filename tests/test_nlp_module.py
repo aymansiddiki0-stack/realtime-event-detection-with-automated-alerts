@@ -8,7 +8,7 @@ import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from nlp_module import NLPProcessor
+from nlp_module import NLPProcessor, CATEGORIES, ZERO_SHOT_LABELS
 
 
 @pytest.fixture
@@ -42,8 +42,35 @@ def test_classify_event(nlp_processor):
     """Test event classification"""
     text = "A major earthquake struck California, causing widespread damage."
     category, confidence = nlp_processor.classify_event(text)
-    
-    assert category in ['natural disaster', 'disaster', 'other']
+
+    assert category in CATEGORIES
+    assert 0 <= confidence <= 1
+
+
+def test_classification_paths_share_one_vocabulary(nlp_processor):
+    """Both the model and the keyword fallback must emit canonical categories"""
+    text = "A major earthquake struck California, causing widespread damage."
+
+    model_category, _ = nlp_processor.classify_event(text)
+    fallback_category, _ = nlp_processor._keyword_classify(text)
+
+    assert model_category in CATEGORIES
+    assert fallback_category in CATEGORIES
+    assert fallback_category == 'natural_disaster'
+
+
+def test_zero_shot_labels_map_into_canonical_vocabulary():
+    assert set(ZERO_SHOT_LABELS.values()) <= set(CATEGORIES)
+
+
+def test_keyword_categories_are_canonical(nlp_processor):
+    assert set(nlp_processor.crisis_keywords) <= set(CATEGORIES)
+
+
+def test_unclassifiable_text_falls_back_to_other(nlp_processor):
+    category, confidence = nlp_processor._keyword_classify('lorem ipsum sit amet')
+
+    assert category == 'other'
     assert 0 <= confidence <= 1
 
 

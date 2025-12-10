@@ -24,7 +24,7 @@ def alert_manager(monkeypatch):
 def sample_spike():
     return {
         'type': 'keyword_spike',
-        'category': 'disaster',
+        'category': 'natural_disaster',
         'keyword': 'earthquake',
         'count': 150,
         'baseline': 20.0,
@@ -97,7 +97,7 @@ def test_format_keyword_spike_alert(alert_manager, sample_spike):
     message = alert_manager.format_keyword_spike_alert(sample_spike)
 
     assert 'earthquake' in message
-    assert 'DISASTER' in message
+    assert 'NATURAL_DISASTER' in message
     assert '150' in message
     assert '7.5' in message
 
@@ -107,7 +107,7 @@ def test_format_location_cluster_alert(alert_manager):
         'type': 'location_cluster',
         'location': 'California',
         'event_count': 5,
-        'category': 'disaster',
+        'category': 'natural_disaster',
         'avg_severity': 0.8,
         'severity': 'high'
     }

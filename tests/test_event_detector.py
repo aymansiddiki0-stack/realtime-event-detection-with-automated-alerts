@@ -25,7 +25,7 @@ def sample_events():
             'event_id': '1',
             'title': 'Earthquake hits California',
             'description': 'Major seismic activity reported in California',
-            'category': 'disaster',
+            'category': 'natural_disaster',
             'nlp_data': {
                 'entities': {'locations': ['California']},
                 'severity_score': 0.8
@@ -35,7 +35,7 @@ def sample_events():
             'event_id': '2',
             'title': 'California earthquake aftermath',
             'description': 'Damage assessment underway in California',
-            'category': 'disaster',
+            'category': 'natural_disaster',
             'nlp_data': {
                 'entities': {'locations': ['California']},
                 'severity_score': 0.7
@@ -45,7 +45,7 @@ def sample_events():
             'event_id': '3',
             'title': 'Emergency response in California',
             'description': 'Teams mobilized for earthquake response',
-            'category': 'disaster',
+            'category': 'natural_disaster',
             'nlp_data': {
                 'entities': {'locations': ['California']},
                 'severity_score': 0.9
@@ -90,7 +90,7 @@ def test_location_clustering(detector, sample_events):
         cluster = clusters[0]
         assert cluster['location'] == 'California'
         assert cluster['event_count'] == 3
-        assert cluster['category'] == 'disaster'
+        assert cluster['category'] == 'natural_disaster'
 
 
 def test_topic_clustering(detector, sample_events):
