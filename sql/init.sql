@@ -1,7 +1,9 @@
--- Initialize database schema for Event Detection Pipeline
-
--- Enable UUID extension
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+-- Database schema for the Event Detection Pipeline.
+--
+-- This file is the single definition of the schema. Postgres applies it on
+-- first boot from docker-entrypoint-initdb.d, and StorageManager reapplies it
+-- at startup so existing volumes pick up new objects. Every statement must
+-- therefore stay idempotent.
 
 -- Events table
 CREATE TABLE IF NOT EXISTS events (
