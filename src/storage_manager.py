@@ -5,6 +5,7 @@ Database operations - handles all Postgres reads/writes
 import os
 import json
 import logging
+from pathlib import Path
 from typing import List, Dict, Optional
 from datetime import datetime, timedelta
 import psycopg2
@@ -13,6 +14,12 @@ from contextlib import contextmanager
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Single source of truth for the schema. Postgres runs it on first boot via
+# docker-entrypoint-initdb.d; StorageManager reruns it on startup so an
+# existing volume also picks up new objects. Every statement must stay
+# idempotent (IF NOT EXISTS / OR REPLACE).
+SCHEMA_FILE = Path(__file__).resolve().parent.parent / 'sql' / 'init.sql'
 
 
 class StorageManager:
@@ -52,71 +59,18 @@ class StorageManager:
                 conn.close()
 
     def _ensure_tables_exist(self):
-        """Create tables and indexes if needed"""
+        """Apply the schema file so the database matches sql/init.sql"""
+        if not SCHEMA_FILE.exists():
+            logger.warning(f"Schema file not found at {SCHEMA_FILE}, skipping")
+            return
+
+        schema_sql = SCHEMA_FILE.read_text(encoding='utf-8')
+
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            
-            # Events table
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS events (
-                    id SERIAL PRIMARY KEY,
-                    event_id VARCHAR(255) UNIQUE NOT NULL,
-                    source VARCHAR(50),
-                    source_type VARCHAR(50),
-                    title TEXT,
-                    description TEXT,
-                    content TEXT,
-                    url TEXT,
-                    published_at TIMESTAMP,
-                    timestamp TIMESTAMP,
-                    category VARCHAR(100),
-                    category_confidence FLOAT,
-                    crisis_level VARCHAR(20),
-                    severity_score FLOAT,
-                    persons TEXT,
-                    organizations TEXT,
-                    locations TEXT,
-                    word_count INTEGER,
-                    processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                );
-                
-                CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp);
-                CREATE INDEX IF NOT EXISTS idx_events_category ON events(category);
-                CREATE INDEX IF NOT EXISTS idx_events_crisis_level ON events(crisis_level);
-                CREATE INDEX IF NOT EXISTS idx_events_processed_at ON events(processed_at);
-            """)
-            
-            # Detected events table
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS detected_events (
-                    id SERIAL PRIMARY KEY,
-                    detection_type VARCHAR(50),
-                    category VARCHAR(100),
-                    severity VARCHAR(20),
-                    event_count INTEGER,
-                    details JSONB,
-                    detected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    alert_sent BOOLEAN DEFAULT FALSE
-                );
-                
-                CREATE INDEX IF NOT EXISTS idx_detected_events_severity ON detected_events(severity);
-                CREATE INDEX IF NOT EXISTS idx_detected_events_detected_at ON detected_events(detected_at);
-            """)
-            
-            # Alerts table
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS alerts (
-                    id SERIAL PRIMARY KEY,
-                    detection_id INTEGER REFERENCES detected_events(id),
-                    alert_type VARCHAR(50),
-                    message TEXT,
-                    sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    status VARCHAR(20)
-                );
-            """)
-            
-            logger.info("Database tables verified")
+            cursor.execute(schema_sql)
+
+        logger.info("Database schema applied")
     
     def insert_events(self, events: List[Dict]) -> int:
         """Batch insert events into DB"""
