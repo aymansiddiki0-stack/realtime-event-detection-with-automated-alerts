@@ -25,3 +25,4 @@ RUN pip install --no-cache-dir \
 COPY dags/ ${AIRFLOW_HOME}/dags/
 COPY configs/ ${AIRFLOW_HOME}/configs/
 COPY src/ ${AIRFLOW_HOME}/src/
+COPY sql/ ${AIRFLOW_HOME}/sql/
