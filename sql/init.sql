@@ -66,6 +66,20 @@ CREATE TABLE IF NOT EXISTS alerts (
 CREATE INDEX IF NOT EXISTS idx_alerts_sent_at ON alerts(sent_at);
 CREATE INDEX IF NOT EXISTS idx_alerts_status ON alerts(status);
 
+-- Per-run keyword mention counts. Spike detection compares the current
+-- run's count for a keyword against the median of its own history here,
+-- so the baseline survives process restarts.
+CREATE TABLE IF NOT EXISTS keyword_observations (
+    id SERIAL PRIMARY KEY,
+    category VARCHAR(100) NOT NULL,
+    keyword VARCHAR(100) NOT NULL,
+    mention_count INTEGER NOT NULL,
+    observed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_keyword_observations_lookup
+    ON keyword_observations(category, keyword, observed_at DESC);
+
 -- Pipeline metrics table
 CREATE TABLE IF NOT EXISTS pipeline_metrics (
     id SERIAL PRIMARY KEY,
