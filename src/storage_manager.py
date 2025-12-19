@@ -166,6 +166,50 @@ class StorageManager:
 
             return alert_id
 
+    def get_keyword_baselines(self, category: str, keywords: List[str],
+                              window_hours: int = 168) -> Dict[str, Dict]:
+        """Median historical mention count per keyword, with sample size"""
+        if not keywords:
+            return {}
+
+        with self.get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+            cursor.execute("""
+                SELECT
+                    keyword,
+                    percentile_cont(0.5) WITHIN GROUP (ORDER BY mention_count) AS median_count,
+                    COUNT(*) AS observations
+                FROM keyword_observations
+                WHERE category = %s
+                  AND keyword = ANY(%s)
+                  AND observed_at > NOW() - make_interval(hours => %s)
+                GROUP BY keyword
+            """, (category, list(keywords), window_hours))
+
+            return {
+                row['keyword']: {
+                    'baseline': float(row['median_count']),
+                    'observations': int(row['observations'])
+                }
+                for row in cursor.fetchall()
+            }
+
+    def record_keyword_observations(self, category: str, counts: Dict[str, int]) -> int:
+        """Store this run's mention counts so future runs have a baseline"""
+        if not counts:
+            return 0
+
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+
+            execute_values(cursor, """
+                INSERT INTO keyword_observations (category, keyword, mention_count)
+                VALUES %s
+            """, [(category, keyword, count) for keyword, count in counts.items()])
+
+            return cursor.rowcount
+
     def get_recent_events(self, hours: int = 24, limit: int = 100) -> List[Dict]:
         """Fetch recent events from DB"""
         with self.get_connection() as conn:
@@ -271,8 +315,20 @@ class StorageManager:
 
             detected_deleted = cursor.rowcount
 
-            logger.info(f"Cleaned up {events_deleted} events and {detected_deleted} detected events")
-            return events_deleted + detected_deleted
+            # Baselines only look back baseline_window_hours, so anything
+            # older than the retention window is unreachable history.
+            cursor.execute("""
+                DELETE FROM keyword_observations
+                WHERE observed_at < NOW() - make_interval(days => %s)
+            """, (days,))
+
+            observations_deleted = cursor.rowcount
+
+            logger.info(
+                f"Cleaned up {events_deleted} events, {detected_deleted} detected events, "
+                f"{observations_deleted} keyword observations"
+            )
+            return events_deleted + detected_deleted + observations_deleted
 
 
 # singleton pattern
