@@ -15,20 +15,55 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+class InMemoryBaselineStore:
+    """Baseline history kept in the process. Useful for tests and one-off runs.
+
+    Detection normally runs as a scheduled task in a fresh process, so
+    production uses the database-backed store instead.
+    """
+
+    def __init__(self):
+        self._history = defaultdict(list)
+
+    def get_keyword_baselines(self, category: str, keywords: List[str],
+                              window_hours: int = 168) -> Dict[str, Dict]:
+        baselines = {}
+
+        for keyword in keywords:
+            counts = self._history.get((category, keyword), [])
+            if counts:
+                baselines[keyword] = {
+                    'baseline': float(np.median(counts)),
+                    'observations': len(counts)
+                }
+
+        return baselines
+
+    def record_keyword_observations(self, category: str, counts: Dict[str, int]) -> int:
+        for keyword, count in counts.items():
+            self._history[(category, keyword)].append(count)
+
+        return len(counts)
+
+
 class EventDetector:
     """Finds emerging events through spike detection and clustering"""
 
     def __init__(self,
                  spike_threshold: float = 2.0,
                  min_cluster_size: int = 3,
-                 time_window_minutes: int = 60):
+                 time_window_minutes: int = 60,
+                 baseline_store=None,
+                 baseline_window_hours: int = 168,
+                 min_baseline_observations: int = 3):
         self.spike_threshold = spike_threshold
         self.min_cluster_size = min_cluster_size
         self.time_window = timedelta(minutes=time_window_minutes)
 
-        # keep track of historical rates for baseline comparison
-        self.historical_rates = defaultdict(list)
-        self.baseline_window = 24 * 60
+        self.baseline_store = baseline_store or InMemoryBaselineStore()
+        self.baseline_window_hours = baseline_window_hours
+        # A ratio against one or two past runs is noise, not a trend.
+        self.min_baseline_observations = min_baseline_observations
 
         logger.info(f"Event detector initialized (threshold={spike_threshold}, "
                    f"min_cluster={min_cluster_size}, window={time_window_minutes}m)")
@@ -51,31 +86,45 @@ class EventDetector:
         
         # Detects spikes
         spikes = []
-        
+
         for category, keywords in category_keywords.items():
-            # Get historical baseline
-            baseline = self._get_baseline(category)
-            
-            # Check each keyword
-            for keyword, count in keywords.most_common(20):
-                if baseline > 0:
-                    spike_ratio = count / baseline
-                    
-                    if spike_ratio >= self.spike_threshold and count >= self.min_cluster_size:
-                        spikes.append({
-                            'type': 'keyword_spike',
-                            'category': category,
-                            'keyword': keyword,
-                            'count': count,
-                            'baseline': baseline,
-                            'spike_ratio': spike_ratio,
-                            'severity': self._calculate_severity(spike_ratio),
-                            'detected_at': datetime.utcnow().isoformat()
-                        })
-            
-            # Update baseline
-            self._update_baseline(category, len(keywords))
-        
+            current_counts = dict(keywords.most_common(20))
+
+            baselines = self.baseline_store.get_keyword_baselines(
+                category, list(current_counts), self.baseline_window_hours
+            )
+
+            for keyword, count in current_counts.items():
+                history = baselines.get(keyword)
+
+                # No history means no evidence of a change, however loud the
+                # keyword is right now.
+                if not history or history['observations'] < self.min_baseline_observations:
+                    continue
+
+                baseline = history['baseline']
+                if baseline <= 0:
+                    continue
+
+                spike_ratio = count / baseline
+
+                if spike_ratio >= self.spike_threshold and count >= self.min_cluster_size:
+                    spikes.append({
+                        'type': 'keyword_spike',
+                        'category': category,
+                        'keyword': keyword,
+                        'count': count,
+                        'baseline': baseline,
+                        'observations': history['observations'],
+                        'spike_ratio': spike_ratio,
+                        'severity': self._calculate_severity(spike_ratio),
+                        'detected_at': datetime.utcnow().isoformat()
+                    })
+
+            # Recorded after comparison so this run's counts do not dilute the
+            # baseline they were just measured against.
+            self.baseline_store.record_keyword_observations(category, current_counts)
+
         logger.info(f"Detected {len(spikes)} keyword spikes")
         return spikes
     
@@ -243,21 +292,6 @@ class EventDetector:
         logger.info(f"Total detected events: {total_detected}")
         
         return detected_events
-    
-    def _get_baseline(self, category: str) -> float:
-        """Get historical baseline for category"""
-        if category not in self.historical_rates or not self.historical_rates[category]:
-            return 1.0  # Default baseline
-        
-        return np.median(self.historical_rates[category])
-    
-    def _update_baseline(self, category: str, count: int):
-        """Update historical baseline"""
-        self.historical_rates[category].append(count)
-        
-        # Keep only recent history
-        if len(self.historical_rates[category]) > self.baseline_window:
-            self.historical_rates[category].pop(0)
     
     def _calculate_severity(self, value: float) -> str:
         """Calculate severity level"""
