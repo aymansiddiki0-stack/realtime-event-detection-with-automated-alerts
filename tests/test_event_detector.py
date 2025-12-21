@@ -147,14 +147,74 @@ def test_empty_events(detector):
     assert detected['topic_clusters'] == []
 
 
-def test_baseline_tracking(detector):
-    """Test baseline tracking"""
-    baseline1 = detector._get_baseline('disaster')
-    
-    detector._update_baseline('disaster', 10)
-    
-    baseline2 = detector._get_baseline('disaster')
-    assert baseline2 > 0
+def test_no_spike_without_history(detector, sample_events):
+    """A first run has nothing to compare against, so nothing is a spike"""
+    spikes = detector.detect_keyword_spikes(sample_events)
+
+    assert spikes == []
+
+
+def test_baseline_accumulates_per_keyword(detector, sample_events):
+    """Counts are recorded per keyword, not as a vocabulary size"""
+    detector.detect_keyword_spikes(sample_events)
+
+    baselines = detector.baseline_store.get_keyword_baselines(
+        'natural_disaster', ['california', 'earthquake']
+    )
+
+    # "California" is mentioned five times across the three disaster events,
+    # in titles and descriptions; the baseline tracks mentions, not events.
+    assert baselines['california']['baseline'] == 5.0
+    assert baselines['california']['observations'] == 1
+
+
+def test_spike_detected_against_established_baseline(detector):
+    """A keyword rising well above its own history is a spike"""
+    quiet = [
+        {'title': 'Storm warning issued', 'description': 'minor flooding',
+         'category': 'natural_disaster', 'nlp_data': {}}
+    ]
+    for _ in range(3):
+        detector.detect_keyword_spikes(quiet)
+
+    surge = [
+        {'title': f'Flooding worsens across the region {i}',
+         'description': 'flooding flooding flooding',
+         'category': 'natural_disaster', 'nlp_data': {}}
+        for i in range(6)
+    ]
+    spikes = detector.detect_keyword_spikes(surge)
+
+    flooding = [s for s in spikes if s['keyword'] == 'flooding']
+    assert flooding, f"expected a flooding spike, got {[s['keyword'] for s in spikes]}"
+    assert flooding[0]['spike_ratio'] >= 2.0
+    assert flooding[0]['baseline'] == 1.0
+    assert flooding[0]['observations'] == 3
+
+
+def test_steady_volume_is_not_a_spike(detector):
+    """Unchanged mention rates must not fire, however large"""
+    steady = [
+        {'title': f'Election coverage update {i}',
+         'description': 'election election election',
+         'category': 'politics', 'nlp_data': {}}
+        for i in range(10)
+    ]
+
+    for _ in range(4):
+        spikes = detector.detect_keyword_spikes(steady)
+
+    assert [s for s in spikes if s['keyword'] == 'election'] == []
+
+
+def test_min_baseline_observations_is_enforced(detector, sample_events):
+    """Fewer observations than required means no comparison is attempted"""
+    detector.min_baseline_observations = 5
+
+    for _ in range(4):
+        spikes = detector.detect_keyword_spikes(sample_events)
+
+    assert spikes == []
 
 
 if __name__ == '__main__':
