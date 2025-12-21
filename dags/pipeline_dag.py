@@ -38,10 +38,12 @@ def run_event_detection():
 
     print(f"Processing {len(events)} events")
 
+    # Each run is a new process, so the baseline has to live in the database.
     detector = EventDetector(
         spike_threshold=2.0,
         min_cluster_size=3,
-        time_window_minutes=60
+        time_window_minutes=60,
+        baseline_store=storage
     )
 
     detected_events = detector.detect_all_events(events)
