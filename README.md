@@ -57,8 +57,6 @@ The pipeline connects to NewsAPI, Reddit, and GDELT, processes streams with NLP 
 #### Configuration
 All runtime settings are defined in:
 - configs/credentials.env – API keys and secrets
-- configs/kafka_config.yaml – Kafka topics and partitions
-- configs/alert_config.yaml – Alert thresholds (spike multipliers, crisis levels)
 - docker-compose.yml – Container resource allocation
 
 #### Default storage:
