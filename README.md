@@ -8,7 +8,7 @@ The pipeline connects to NewsAPI, Reddit, and GDELT, processes streams with NLP 
 - APIs: NewsAPI, Reddit, GDELT
 - Processing: Apache Kafka
 - NLP/ML: spaCy, Hugging Face Transformers, scikit-learn (DBSCAN, TF-IDF)
-- Storage: PostgreSQL, Redis, Elasticsearch
+- Storage: PostgreSQL
 - Orchestration: Airflow, Docker Compose
 - Visualization: Streamlit, Plotly
 - Monitoring: Prometheus, Grafana
@@ -36,7 +36,7 @@ The pipeline connects to NewsAPI, Reddit, and GDELT, processes streams with NLP 
 ### This starts:
 - Kafka broker for event streaming
 - Stream processor for NLP enrichment
-- PostgreSQL + Redis + Elasticsearch for storage
+- PostgreSQL for storage
 - Airflow for orchestration
 - Streamlit dashboard
 - Prometheus and Grafana for monitoring
@@ -60,9 +60,7 @@ All runtime settings are defined in:
 - docker-compose.yml – Container resource allocation
 
 #### Default storage:
-- PostgreSQL: Events, summaries, alerts
-- Redis: Real-time caches and trending counters
-- Elasticsearch: Full-text search and indexing
+- PostgreSQL: Events, detections, alerts, and keyword baselines
 
 #### Testing
 Run automated tests to validate NLP, detection, and storage logic:
