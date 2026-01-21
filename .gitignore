@@ -16,7 +16,7 @@ dist/
 htmlcov/
 
 # Secrets
-configs/credentials.env
+.env
 *.key
 *.pem
 
