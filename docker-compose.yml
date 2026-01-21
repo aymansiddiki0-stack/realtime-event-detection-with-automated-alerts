@@ -59,7 +59,7 @@ services:
     container_name: postgres
     environment:
       POSTGRES_USER: eventpipeline
-      POSTGRES_PASSWORD: pipeline_secret_2024
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: events_db
       PGDATA: /var/lib/postgresql/data/pgdata
     ports:
@@ -93,13 +93,12 @@ services:
       - POSTGRES_PORT=5432
       - POSTGRES_DB=events_db
       - POSTGRES_USER=eventpipeline
-      - POSTGRES_PASSWORD=pipeline_secret_2024
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
     env_file:
-      - configs/credentials.env
+      - .env
     command: python src/kafka_producer.py
     volumes:
       - ./src:/app/src
-      - ./configs:/app/configs
       - ./logs:/app/logs
     networks:
       - event-pipeline-network
@@ -111,6 +110,8 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: stream-processor
+    env_file:
+      - .env
     depends_on:
       kafka:
         condition: service_healthy
@@ -122,11 +123,10 @@ services:
       - POSTGRES_PORT=5432
       - POSTGRES_DB=events_db
       - POSTGRES_USER=eventpipeline
-      - POSTGRES_PASSWORD=pipeline_secret_2024
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
     command: python src/stream_processor.py
     volumes:
       - ./src:/app/src
-      - ./configs:/app/configs
       - ./logs:/app/logs
     networks:
       - event-pipeline-network
@@ -138,7 +138,7 @@ services:
     container_name: airflow-postgres
     environment:
       POSTGRES_USER: airflow
-      POSTGRES_PASSWORD: airflow
+      POSTGRES_PASSWORD: ${AIRFLOW_DB_PASSWORD:?set AIRFLOW_DB_PASSWORD in .env}
       POSTGRES_DB: airflow
     volumes:
       - airflow-postgres-data:/var/lib/postgresql/data
@@ -162,13 +162,12 @@ services:
         condition: service_healthy
     environment:
       - AIRFLOW__CORE__EXECUTOR=LocalExecutor
-      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@airflow-postgres/airflow
-      - AIRFLOW__CORE__FERNET_KEY=81HqDtbqAywKSOumSha3BhWNOdQ26slT6K0YaZeZyPs=
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:${AIRFLOW_DB_PASSWORD}@airflow-postgres/airflow
+      - AIRFLOW__CORE__FERNET_KEY=${AIRFLOW_FERNET_KEY:?set AIRFLOW_FERNET_KEY in .env}
       - AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION=true
       - AIRFLOW__CORE__LOAD_EXAMPLES=false
     volumes:
       - ./dags:/opt/airflow/dags
-      - ./configs:/opt/airflow/configs
       - ./src:/opt/airflow/src
     networks:
       - event-pipeline-network
@@ -183,7 +182,7 @@ services:
           --lastname User \
           --role Admin \
           --email admin@example.com \
-          --password admin || true
+          --password "${AIRFLOW_ADMIN_PASSWORD:?set AIRFLOW_ADMIN_PASSWORD in .env}" || true
     restart: on-failure
 
   # Airflow Webserver
@@ -199,18 +198,17 @@ services:
         condition: service_healthy
     environment:
       - AIRFLOW__CORE__EXECUTOR=LocalExecutor
-      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@airflow-postgres/airflow
-      - AIRFLOW__CORE__FERNET_KEY=81HqDtbqAywKSOumSha3BhWNOdQ26slT6K0YaZeZyPs=
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:${AIRFLOW_DB_PASSWORD}@airflow-postgres/airflow
+      - AIRFLOW__CORE__FERNET_KEY=${AIRFLOW_FERNET_KEY:?set AIRFLOW_FERNET_KEY in .env}
       - AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION=true
       - AIRFLOW__CORE__LOAD_EXAMPLES=false
       - AIRFLOW__API__AUTH_BACKENDS=airflow.api.auth.backend.basic_auth
-      - AIRFLOW__WEBSERVER__SECRET_KEY=secret
+      - AIRFLOW__WEBSERVER__SECRET_KEY=${AIRFLOW_SECRET_KEY:?set AIRFLOW_SECRET_KEY in .env}
     ports:
       - "8081:8080"
     volumes:
       - ./dags:/opt/airflow/dags
       - ./logs:/opt/airflow/logs
-      - ./configs:/opt/airflow/configs
       - ./src:/opt/airflow/src
     networks:
       - event-pipeline-network
@@ -230,14 +228,13 @@ services:
         condition: service_healthy
     environment:
       - AIRFLOW__CORE__EXECUTOR=LocalExecutor
-      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@airflow-postgres/airflow
-      - AIRFLOW__CORE__FERNET_KEY=81HqDtbqAywKSOumSha3BhWNOdQ26slT6K0YaZeZyPs=
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:${AIRFLOW_DB_PASSWORD}@airflow-postgres/airflow
+      - AIRFLOW__CORE__FERNET_KEY=${AIRFLOW_FERNET_KEY:?set AIRFLOW_FERNET_KEY in .env}
       - AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION=true
       - AIRFLOW__CORE__LOAD_EXAMPLES=false
     volumes:
       - ./dags:/opt/airflow/dags
       - ./logs:/opt/airflow/logs
-      - ./configs:/opt/airflow/configs
       - ./src:/opt/airflow/src
     networks:
       - event-pipeline-network
@@ -250,6 +247,8 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: dashboard
+    env_file:
+      - .env
     depends_on:
       postgres:
         condition: service_healthy
@@ -258,14 +257,13 @@ services:
       - POSTGRES_PORT=5432
       - POSTGRES_DB=events_db
       - POSTGRES_USER=eventpipeline
-      - POSTGRES_PASSWORD=pipeline_secret_2024
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
     ports:
       - "8501:8501"
     command: streamlit run dashboard/app.py --server.port=8501 --server.address=0.0.0.0
     volumes:
       - ./dashboard:/app/dashboard
       - ./src:/app/src
-      - ./configs:/app/configs
     networks:
       - event-pipeline-network
     restart: unless-stopped
@@ -297,8 +295,8 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in .env}
       - GF_INSTALL_PLUGINS=grafana-clock-panel
     volumes:
       - grafana-data:/var/lib/grafana
