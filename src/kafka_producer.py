@@ -18,7 +18,7 @@ import praw
 from prometheus_client import Counter, Gauge, Histogram, start_http_server
 import threading
 
-load_dotenv('configs/credentials.env')
+load_dotenv()
 
 logging.basicConfig(
     level=logging.INFO,

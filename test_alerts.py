@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
-load_dotenv('configs/credentials.env')
+load_dotenv()
 
 from alert_manager import get_alert_manager
 

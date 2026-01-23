@@ -18,7 +18,6 @@ RUN python -m spacy download en_core_web_sm
 
 COPY src/ ./src/
 COPY sql/ ./sql/
-COPY configs/ ./configs/
 COPY dashboard/ ./dashboard/
 
 RUN mkdir -p logs

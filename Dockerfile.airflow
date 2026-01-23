@@ -23,6 +23,5 @@ RUN pip install --no-cache-dir \
     apache-airflow-providers-http==4.7.0
 
 COPY dags/ ${AIRFLOW_HOME}/dags/
-COPY configs/ ${AIRFLOW_HOME}/configs/
 COPY src/ ${AIRFLOW_HOME}/src/
 COPY sql/ ${AIRFLOW_HOME}/sql/

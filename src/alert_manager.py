@@ -12,7 +12,7 @@ from typing import Dict, List, Optional
 import requests
 from dotenv import load_dotenv
 
-load_dotenv('configs/credentials.env')
+load_dotenv()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
