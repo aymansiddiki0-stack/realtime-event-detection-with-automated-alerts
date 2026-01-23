@@ -19,12 +19,23 @@ check_docker_compose() {
 }
 
 setup_credentials() {
-    if [ ! -f "configs/credentials.env" ]; then
-        cp configs/credentials.env.example configs/credentials.env
-        echo "Created configs/credentials.env - edit with your API keys"
-    else
-        echo "Credentials file exists"
+    if [ -f ".env" ]; then
+        echo "Environment file exists"
+        return
     fi
+
+    cp .env.example .env
+
+    # Generated rather than shipped, so no deployment starts with a known key.
+    local fernet secret
+    fernet=$(python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())" 2>/dev/null || openssl rand -base64 32)
+    secret=$(python3 -c "import secrets; print(secrets.token_hex(32))" 2>/dev/null || openssl rand -hex 32)
+
+    sed -i.bak "s|^AIRFLOW_FERNET_KEY=.*|AIRFLOW_FERNET_KEY=${fernet}|" .env
+    sed -i.bak "s|^AIRFLOW_SECRET_KEY=.*|AIRFLOW_SECRET_KEY=${secret}|" .env
+    rm -f .env.bak
+
+    echo "Created .env - set the change_me passwords and your API keys before starting"
 }
 
 create_directories() {
@@ -53,11 +64,11 @@ show_access_info() {
     echo "Setup complete"
     echo ""
     echo "Dashboard:  http://localhost:8501"
-    echo "Airflow:    http://localhost:8081 (admin/admin)"
-    echo "Grafana:    http://localhost:3000 (admin/admin)"
+    echo "Airflow:    http://localhost:8081 (admin / AIRFLOW_ADMIN_PASSWORD from .env)"
+    echo "Grafana:    http://localhost:3000 (credentials from .env)"
     echo "Prometheus: http://localhost:9090"
     echo ""
-    echo "Edit configs/credentials.env with your API keys, then:"
+    echo "Edit .env with your API keys, then:"
     echo "docker-compose restart kafka-producer"
 }
 

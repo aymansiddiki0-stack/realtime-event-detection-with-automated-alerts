@@ -24,9 +24,10 @@ The pipeline connects to NewsAPI, Reddit, and GDELT, processes streams with NLP 
 
 #### Setup
 1. Clone the repository
-2. Set your API keys:
-    - Copy the example file: cp configs/credentials.env.example configs/credentials.env
-    - Edit configs/credentials.env with your NewsAPI key, Reddit credentials, Slack webhook, etc.
+2. Set your credentials:
+    - Copy the example file: cp .env.example .env
+    - Edit .env with your passwords, NewsAPI key, Reddit credentials, Slack webhook, etc.
+    - Sources and alert channels left blank are skipped, so you can start with none of them.
 3. Run the setup script:
     - chmod +x setup.sh
     - ./setup.sh
@@ -56,7 +57,7 @@ The pipeline connects to NewsAPI, Reddit, and GDELT, processes streams with NLP 
 
 #### Configuration
 All runtime settings are defined in:
-- configs/credentials.env – API keys and secrets
+- .env – credentials and runtime settings for both Compose and the services
 - docker-compose.yml – Container resource allocation
 
 #### Default storage:
