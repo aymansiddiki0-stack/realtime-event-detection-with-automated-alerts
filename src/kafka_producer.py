@@ -5,6 +5,7 @@ Data ingestion from news APIs - Kafka Pulls from NewsAPI, Reddit, and GDELT ever
 import os
 import json
 import time
+import random
 import hashlib
 import logging
 from datetime import datetime
@@ -36,6 +37,8 @@ messages_failed_total = Counter('kafka_messages_failed_total', 'Total failed mes
 events_fetched_total = Counter('events_fetched_total', 'Total events fetched from sources', ['source'])
 events_skipped_total = Counter('events_skipped_total', 'Events dropped for lacking a usable identity', ['source'])
 fetch_duration_seconds = Histogram('fetch_duration_seconds', 'Time spent fetching from sources', ['source'])
+rate_limited_total = Counter('source_rate_limited_total', 'Rate-limit responses from sources', ['source'])
+source_backoff_seconds = Gauge('source_backoff_seconds', 'Current backoff delay per source', ['source'])
 active_sources = Gauge('active_data_sources', 'Number of active data sources')
 
 
@@ -89,6 +92,76 @@ def make_event_id(source: str, identifier: str) -> str:
 def url_event_id(source: str, url: str) -> str:
     """Event ID derived from a normalized article URL"""
     return make_event_id(source, normalize_url(url))
+
+
+DEFAULT_INTERVALS = {
+    'newsapi': 900,
+    'reddit': 300,
+    'gdelt': 900,
+}
+
+MAX_BACKOFF_SECONDS = 3600
+
+
+class RateLimited(Exception):
+    """A source asked us to slow down"""
+
+    def __init__(self, source: str, retry_after: Optional[float] = None):
+        super().__init__(f"{source} rate limited")
+        self.source = source
+        self.retry_after = retry_after
+
+
+class SourceSchedule:
+    """Decides when a source may next be polled"""
+
+    def __init__(self, name: str, interval: float):
+        self.name = name
+        self.interval = interval
+        self.next_allowed = 0.0
+        self.backoff = 0.0
+
+    def ready(self, now: float) -> bool:
+        return now >= self.next_allowed
+
+    def record_success(self, now: float):
+        self.backoff = 0.0
+        source_backoff_seconds.labels(source=self.name).set(0)
+        self.next_allowed = now + self.interval
+
+    def record_rate_limit(self, now: float, retry_after: Optional[float] = None) -> float:
+        if retry_after is not None:
+            delay = retry_after
+        else:
+            self.backoff = min(max(self.backoff * 2, self.interval), MAX_BACKOFF_SECONDS)
+            delay = self.backoff
+
+        # Jitter keeps several sources from retrying in lockstep after a
+        # shared outage.
+        delay *= random.uniform(1.0, 1.25)
+
+        self.next_allowed = now + delay
+        source_backoff_seconds.labels(source=self.name).set(delay)
+        return delay
+
+
+def parse_retry_after(response) -> Optional[float]:
+    """Read a Retry-After header, which may be seconds or an HTTP date"""
+    value = response.headers.get('Retry-After') if response is not None else None
+    if not value:
+        return None
+
+    try:
+        return float(value)
+    except ValueError:
+        pass
+
+    try:
+        from email.utils import parsedate_to_datetime
+        retry_at = parsedate_to_datetime(value)
+        return max(0.0, (retry_at - datetime.now(retry_at.tzinfo)).total_seconds())
+    except (TypeError, ValueError):
+        return None
 
 
 class EventProducer:
