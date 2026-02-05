@@ -36,9 +36,9 @@ messages_sent_total = Counter('kafka_messages_sent_total', 'Total messages sent 
 messages_failed_total = Counter('kafka_messages_failed_total', 'Total failed messages', ['source'])
 events_fetched_total = Counter('events_fetched_total', 'Total events fetched from sources', ['source'])
 events_skipped_total = Counter('events_skipped_total', 'Events dropped for lacking a usable identity', ['source'])
-fetch_duration_seconds = Histogram('fetch_duration_seconds', 'Time spent fetching from sources', ['source'])
 rate_limited_total = Counter('source_rate_limited_total', 'Rate-limit responses from sources', ['source'])
 source_backoff_seconds = Gauge('source_backoff_seconds', 'Current backoff delay per source', ['source'])
+fetch_duration_seconds = Histogram('fetch_duration_seconds', 'Time spent fetching from sources', ['source'])
 active_sources = Gauge('active_data_sources', 'Number of active data sources')
 
 
@@ -94,6 +94,9 @@ def url_event_id(source: str, url: str) -> str:
     return make_event_id(source, normalize_url(url))
 
 
+# Sources are polled on their own cadence. GDELT publishes roughly every 15
+# minutes and returned sustained 429s under a shared 60s interval; NewsAPI's
+# free tier allows 100 requests a day, which 60s polling exceeds twelve-fold.
 DEFAULT_INTERVALS = {
     'newsapi': 900,
     'reddit': 300,
@@ -190,10 +193,9 @@ class EventProducer:
             except Exception as e:
                 logger.warning(f"Failed to initialize Reddit API: {e}")
 
-        self.last_fetch = {
-            'newsapi': None,
-            'reddit': None,
-            'gdelt': None
+        self.schedules = {
+            name: SourceSchedule(name, float(os.getenv(f'{name.upper()}_INTERVAL', default)))
+            for name, default in DEFAULT_INTERVALS.items()
         }
 
         # Metrics server runs in background
@@ -240,6 +242,17 @@ class EventProducer:
                 else:
                     raise
     
+    def _get(self, source: str, url: str, params: Dict, timeout: int):
+        """HTTP GET that turns a rate-limit response into RateLimited"""
+        response = requests.get(url, params=params, timeout=timeout)
+
+        if response.status_code == 429:
+            rate_limited_total.labels(source=source).inc()
+            raise RateLimited(source, parse_retry_after(response))
+
+        response.raise_for_status()
+        return response
+
     def fetch_newsapi(self) -> List[Dict]:
         """Fetch latest news from NewsAPI"""
         if not self.newsapi_key:
@@ -256,8 +269,7 @@ class EventProducer:
                     'category': 'general'
                 }
 
-                response = requests.get(url, params=params, timeout=10)
-                response.raise_for_status()
+                response = self._get('newsapi', url, params, timeout=10)
 
                 articles = response.json().get('articles', [])
                 events = []
@@ -341,8 +353,7 @@ class EventProducer:
                     'format': 'json'
                 }
 
-                response = requests.get(url, params=params, timeout=15)
-                response.raise_for_status()
+                response = self._get('gdelt', url, params, timeout=15)
 
                 articles = response.json().get('articles', [])
                 events = []
@@ -446,28 +457,50 @@ class EventProducer:
 
         logger.info(f"Sent {success_count}/{len(events)} events from {source} to Kafka")
     
-    def run(self, fetch_interval: int = 60):
-        """Main loop - fetches data and sends to Kafka"""
-        logger.info(f"Starting event producer (fetch interval: {fetch_interval}s)")
+    def poll_once(self, now: Optional[float] = None) -> Dict[str, int]:
+        """Poll every source whose interval has elapsed"""
+        now = time.monotonic() if now is None else now
+        fetchers = {
+            'newsapi': self.fetch_newsapi,
+            'reddit': self.fetch_reddit,
+            'gdelt': self.fetch_gdelt,
+        }
+
+        sent = {}
+
+        for source, fetch in fetchers.items():
+            schedule = self.schedules[source]
+            if not schedule.ready(now):
+                continue
+
+            try:
+                events = fetch()
+            except RateLimited as e:
+                delay = schedule.record_rate_limit(now, e.retry_after)
+                logger.warning(
+                    f"{source} rate limited, next attempt in {delay:.0f}s"
+                    + (" (Retry-After)" if e.retry_after is not None else " (backoff)")
+                )
+                continue
+
+            schedule.record_success(now)
+
+            if events:
+                self.send_to_kafka(events, source)
+                sent[source] = len(events)
+
+        return sent
+
+    def run(self, tick_seconds: int = 15):
+        """Main loop - polls each source on its own schedule"""
+        intervals = {name: s.interval for name, s in self.schedules.items()}
+        logger.info(f"Starting event producer (intervals: {intervals})")
 
         try:
             while True:
-                news_events = self.fetch_newsapi()
-                if news_events:
-                    self.send_to_kafka(news_events, 'newsapi')
-
-                reddit_events = self.fetch_reddit()
-                if reddit_events:
-                    self.send_to_kafka(reddit_events, 'reddit')
-
-                gdelt_events = self.fetch_gdelt()
-                if gdelt_events:
-                    self.send_to_kafka(gdelt_events, 'gdelt')
-
+                self.poll_once()
                 self.producer.flush()
-
-                logger.info(f"Cycle complete. Waiting {fetch_interval}s")
-                time.sleep(fetch_interval)
+                time.sleep(tick_seconds)
 
         except KeyboardInterrupt:
             logger.info("Shutting down producer")
@@ -479,10 +512,8 @@ class EventProducer:
 def main():
     producer = EventProducer()
 
-    # Default is 60s, can be changed via env var
-    fetch_interval = int(os.getenv('FETCH_INTERVAL', 60))
-
-    producer.run(fetch_interval=fetch_interval)
+    # How often schedules are checked, not how often a source is polled.
+    producer.run(tick_seconds=int(os.getenv('PRODUCER_TICK_SECONDS', 15)))
 
 
 if __name__ == '__main__':
