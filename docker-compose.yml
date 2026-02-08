@@ -297,10 +297,10 @@ services:
     environment:
       - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in .env}
-      - GF_INSTALL_PLUGINS=grafana-clock-panel
     volumes:
       - grafana-data:/var/lib/grafana
-      - ./monitoring/grafana_dashboard.json:/etc/grafana/provisioning/dashboards/dashboard.json
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards
     networks:
       - event-pipeline-network
     restart: unless-stopped
