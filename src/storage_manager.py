@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import List, Dict, Optional
 from datetime import datetime, timedelta
 import psycopg2
+from psycopg2 import pool
 from psycopg2.extras import execute_values, RealDictCursor
 from contextlib import contextmanager
 
@@ -30,33 +31,43 @@ class StorageManager:
         self.port = os.getenv('POSTGRES_PORT', '5432')
         self.database = os.getenv('POSTGRES_DB', 'events_db')
         self.user = os.getenv('POSTGRES_USER', 'eventpipeline')
-        self.password = os.getenv('POSTGRES_PASSWORD', 'pipeline_secret_2024')
+        self.password = os.getenv('POSTGRES_PASSWORD')
+
+        # Streamlit reruns the whole script on every widget interaction, and
+        # each rerun issues several queries; a pool keeps that from opening a
+        # new TCP connection and re-authenticating every time.
+        self._pool = pool.ThreadedConnectionPool(
+            minconn=1,
+            maxconn=int(os.getenv('POSTGRES_POOL_SIZE', 10)),
+            host=self.host,
+            port=self.port,
+            database=self.database,
+            user=self.user,
+            password=self.password
+        )
 
         self._ensure_tables_exist()
         logger.info("Storage manager initialized")
-    
+
     @contextmanager
     def get_connection(self):
-        """Get a DB connection with auto-commit/rollback"""
-        conn = None
+        """Borrow a pooled connection, committing or rolling back on exit"""
+        conn = self._pool.getconn()
         try:
-            conn = psycopg2.connect(
-                host=self.host,
-                port=self.port,
-                database=self.database,
-                user=self.user,
-                password=self.password
-            )
             yield conn
             conn.commit()
         except Exception as e:
-            if conn:
-                conn.rollback()
+            conn.rollback()
             logger.error(f"Database error: {e}")
             raise
         finally:
-            if conn:
-                conn.close()
+            self._pool.putconn(conn)
+
+    def close(self):
+        """Release every pooled connection"""
+        if self._pool and not self._pool.closed:
+            self._pool.closeall()
+            logger.info("Connection pool closed")
 
     def _ensure_tables_exist(self):
         """Apply the schema file so the database matches sql/init.sql"""
