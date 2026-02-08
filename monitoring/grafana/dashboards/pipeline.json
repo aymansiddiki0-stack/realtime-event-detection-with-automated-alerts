@@ -1,0 +1,162 @@
+{
+  "uid": "event-pipeline",
+  "title": "Event Pipeline",
+  "tags": ["pipeline"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Events fetched per source",
+      "datasource": { "type": "prometheus", "uid": "pipeline-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "custom": { "fillOpacity": 10 } },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(events_fetched_total[5m])",
+          "legendFormat": "{{source}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Source rate limiting",
+      "description": "GDELT and NewsAPI throttle aggressively; a rising line means the polling interval is too short.",
+      "datasource": { "type": "prometheus", "uid": "pipeline-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "fillOpacity": 10 } },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(source_rate_limited_total[15m]) * 60",
+          "legendFormat": "429s/min {{source}}"
+        },
+        {
+          "refId": "B",
+          "expr": "source_backoff_seconds",
+          "legendFormat": "backoff {{source}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Kafka publishing",
+      "datasource": { "type": "prometheus", "uid": "pipeline-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "custom": { "fillOpacity": 10 } },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(kafka_messages_sent_total[5m])",
+          "legendFormat": "sent {{source}}"
+        },
+        {
+          "refId": "B",
+          "expr": "rate(kafka_messages_failed_total[5m])",
+          "legendFormat": "failed {{source}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Database writes and deduplication",
+      "description": "Duplicates skipped are re-fetched articles rejected by the event_id conflict clause, which is expected and healthy.",
+      "datasource": { "type": "prometheus", "uid": "pipeline-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "custom": { "fillOpacity": 10 } },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(processor_events_written_total[5m])",
+          "legendFormat": "inserted"
+        },
+        {
+          "refId": "B",
+          "expr": "rate(processor_duplicates_skipped_total[5m])",
+          "legendFormat": "duplicates skipped"
+        },
+        {
+          "refId": "C",
+          "expr": "rate(processor_events_consumed_total[5m])",
+          "legendFormat": "consumed"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Processing latency (p95)",
+      "datasource": { "type": "prometheus", "uid": "pipeline-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "fieldConfig": {
+        "defaults": { "unit": "s", "custom": { "fillOpacity": 0 } },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, rate(nlp_processing_seconds_bucket[10m]))",
+          "legendFormat": "NLP"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, rate(db_write_seconds_bucket[10m]))",
+          "legendFormat": "DB write"
+        },
+        {
+          "refId": "C",
+          "expr": "histogram_quantile(0.95, rate(processor_batch_seconds_bucket[10m]))",
+          "legendFormat": "whole batch"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Failures",
+      "datasource": { "type": "prometheus", "uid": "pipeline-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "fillOpacity": 10 } },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(processor_batches_failed_total[15m]) * 60",
+          "legendFormat": "batch failures/min"
+        },
+        {
+          "refId": "B",
+          "expr": "rate(processor_messages_invalid_total[15m]) * 60",
+          "legendFormat": "undecodable messages/min"
+        },
+        {
+          "refId": "C",
+          "expr": "rate(events_skipped_total[15m]) * 60",
+          "legendFormat": "no-identity events/min {{source}}"
+        }
+      ]
+    }
+  ]
+}
