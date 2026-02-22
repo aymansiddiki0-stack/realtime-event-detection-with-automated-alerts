@@ -1,0 +1,23 @@
+FROM python:3.10-bookworm
+
+WORKDIR /app
+
+# spaCy and scikit-learn build native extensions on install.
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    make \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt requirements-nlp.txt ./
+
+RUN pip install --no-cache-dir -r requirements-nlp.txt
+
+COPY src/ ./src/
+COPY sql/ ./sql/
+
+RUN mkdir -p logs
+
+ENV PYTHONPATH=/app:$PYTHONPATH
+
+CMD ["python", "src/stream_processor.py"]
