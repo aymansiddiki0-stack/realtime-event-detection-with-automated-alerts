@@ -108,7 +108,7 @@ services:
   stream-processor:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.nlp
     container_name: stream-processor
     env_file:
       - .env
@@ -245,7 +245,7 @@ services:
   dashboard:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.dashboard
     container_name: dashboard
     env_file:
       - .env
