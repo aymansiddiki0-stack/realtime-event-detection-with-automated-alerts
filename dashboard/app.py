@@ -14,7 +14,6 @@ import json
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from storage_manager import get_storage_manager
-from event_detector import EventDetector
 
 st.set_page_config(
     page_title="Real-Time Event Detection",

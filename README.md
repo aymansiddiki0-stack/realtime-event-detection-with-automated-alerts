@@ -64,7 +64,8 @@ All runtime settings are defined in:
 - PostgreSQL: Events, detections, alerts, and keyword baselines
 
 #### Testing
-Run automated tests to validate NLP, detection, and storage logic:
+Install the development dependencies, then run the suite:
+- pip install -r requirements-dev.txt
 - pytest -v
 
 Test the alert system manually:
