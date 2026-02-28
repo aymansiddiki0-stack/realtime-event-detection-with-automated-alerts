@@ -55,7 +55,10 @@ services:
 
   # PostgreSQL Database
   postgres:
-    image: postgres:15-alpine
+    # pgvector's image rather than stock postgres: identical Postgres 15 with
+    # the vector extension available, which sql/init.sql needs for semantic
+    # retrieval. Stock postgres cannot install it at all.
+    image: pgvector/pgvector:pg15
     container_name: postgres
     environment:
       POSTGRES_USER: eventpipeline
