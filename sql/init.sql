@@ -5,6 +5,11 @@
 -- at startup so existing volumes pick up new objects. Every statement must
 -- therefore stay idempotent.
 
+-- pgvector supplies the vector type and the <=> cosine-distance operator used
+-- by semantic retrieval. Requires the pgvector/pgvector image, not stock
+-- postgres, which has no such extension available to install.
+CREATE EXTENSION IF NOT EXISTS vector;
+
 -- Events table
 CREATE TABLE IF NOT EXISTS events (
     id SERIAL PRIMARY KEY,
@@ -36,6 +41,17 @@ CREATE INDEX IF NOT EXISTS idx_events_crisis_level ON events(crisis_level);
 CREATE INDEX IF NOT EXISTS idx_events_processed_at ON events(processed_at);
 CREATE INDEX IF NOT EXISTS idx_events_severity ON events(severity_score DESC);
 CREATE INDEX IF NOT EXISTS idx_events_source ON events(source);
+
+-- Semantic retrieval. The column is added separately rather than declared in
+-- the table body so existing volumes pick it up when StorageManager reapplies
+-- this file; 384 dimensions matches all-MiniLM-L6-v2. Embeddings are stored
+-- L2-normalised, so cosine distance is the correct operator.
+ALTER TABLE events ADD COLUMN IF NOT EXISTS embedding vector(384);
+
+-- HNSW rather than IVFFlat: IVFFlat must be trained on existing rows and
+-- degrades badly when built on an empty table, which is how this one starts.
+CREATE INDEX IF NOT EXISTS idx_events_embedding
+    ON events USING hnsw (embedding vector_cosine_ops);
 
 -- Detected events table
 CREATE TABLE IF NOT EXISTS detected_events (
