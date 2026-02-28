@@ -191,6 +191,8 @@ services:
       context: .
       dockerfile: Dockerfile.airflow
     container_name: airflow-webserver
+    env_file:
+      - .env
     depends_on:
       airflow-init:
         condition: service_completed_successfully
@@ -221,6 +223,8 @@ services:
       context: .
       dockerfile: Dockerfile.airflow
     container_name: airflow-scheduler
+    env_file:
+      - .env
     depends_on:
       airflow-init:
         condition: service_completed_successfully
