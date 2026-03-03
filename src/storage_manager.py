@@ -13,6 +13,8 @@ from psycopg2 import pool
 from psycopg2.extras import execute_values, RealDictCursor
 from contextlib import contextmanager
 
+from embeddings import to_pgvector
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -83,8 +85,14 @@ class StorageManager:
 
         logger.info("Database schema applied")
     
-    def insert_events(self, events: List[Dict]) -> int:
-        """Batch insert events into DB"""
+    def insert_events(self, events: List[Dict],
+                      embeddings: Optional[List[List[float]]] = None) -> int:
+        """Batch insert events into DB, optionally with their vectors.
+
+        Embeddings are positional: embeddings[i] belongs to events[i]. Passing
+        None stores NULL, which keeps this usable from callers that have no
+        model loaded.
+        """
         if not events:
             return 0
 
@@ -96,16 +104,20 @@ class StorageManager:
                     event_id, source, source_type, title, description, content,
                     url, published_at, timestamp, category, category_confidence,
                     crisis_level, severity_score, persons, organizations, locations,
-                    word_count
+                    word_count, embedding
                 )
                 VALUES %s
                 ON CONFLICT (event_id) DO NOTHING
             """
 
             values = []
-            for event in events:
+            for index, event in enumerate(events):
                 nlp_data = event.get('nlp_data', {})
                 entities = nlp_data.get('entities', {})
+
+                vector = None
+                if embeddings is not None and index < len(embeddings):
+                    vector = to_pgvector(embeddings[index])
 
                 values.append((
                     event.get('event_id'),
@@ -125,7 +137,8 @@ class StorageManager:
                     json.dumps(entities.get('persons', [])),
                     json.dumps(entities.get('organizations', [])),
                     json.dumps(entities.get('locations', [])),
-                    nlp_data.get('word_count', 0)
+                    nlp_data.get('word_count', 0),
+                    vector
                 ))
 
             execute_values(cursor, query, values)
