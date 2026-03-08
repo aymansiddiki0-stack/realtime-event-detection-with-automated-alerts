@@ -29,12 +29,15 @@ messages_invalid = Counter('processor_messages_invalid_total', 'Messages dropped
 batch_processing_duration = Histogram('processor_batch_seconds', 'Time spent processing batches')
 nlp_processing_duration = Histogram('nlp_processing_seconds', 'Time spent on NLP processing')
 db_write_duration = Histogram('db_write_seconds', 'Time spent writing to database')
+embedding_duration = Histogram('embedding_seconds', 'Time spent embedding events for retrieval')
+events_embedded = Counter('processor_events_embedded_total', 'Events embedded for semantic retrieval')
+events_embedding_failed = Counter('processor_events_embedding_failed_total', 'Events stored without a vector')
 
 
 class EventConsumer:
     """Consumes raw events, enriches them with NLP, and persists them"""
 
-    def __init__(self, nlp_processor=None, storage=None):
+    def __init__(self, nlp_processor=None, storage=None, embedder=None):
         self.kafka_servers = os.getenv('KAFKA_BOOTSTRAP_SERVERS', 'localhost:9092')
         self.topic = 'raw-events'
         self.group_id = 'event-processor'
@@ -43,6 +46,7 @@ class EventConsumer:
         # stack (spaCy + transformers) takes tens of seconds to import.
         self._nlp = nlp_processor
         self._storage = storage
+        self._embedder = embedder
 
         self._running = True
 
@@ -64,6 +68,13 @@ class EventConsumer:
             from storage_manager import get_storage_manager
             self._storage = get_storage_manager()
         return self._storage
+
+    @property
+    def embedder(self):
+        if self._embedder is None:
+            from embeddings import get_embedder
+            self._embedder = get_embedder()
+        return self._embedder
 
     def _start_metrics_server(self):
         """Start Prometheus metrics HTTP server"""
@@ -113,13 +124,34 @@ class EventConsumer:
             logger.warning(f"Dropping undecodable message: {e}")
             return None
 
+    def _embed(self, events: List[Dict]) -> Optional[List[List[float]]]:
+        """Vectors for a batch, or None if the model could not produce them.
+
+        Embedding failure must not cost us the events themselves, so this
+        degrades to None and the rows are stored without vectors rather than
+        the batch being lost. They are simply not retrievable semantically
+        until re-embedded.
+        """
+        try:
+            with embedding_duration.time():
+                return self.embedder.embed_events(events)
+        except Exception as e:
+            events_embedding_failed.inc(len(events))
+            logger.warning(f"Embedding failed for {len(events)} events, storing without vectors: {e}")
+            return None
+
     def handle_batch(self, events: List[Dict]) -> int:
         """Run NLP on a batch and persist it; returns rows actually inserted"""
         with nlp_processing_duration.time():
             processed_events = self.nlp.batch_process(events)
 
+        embeddings = self._embed(processed_events)
+
         with db_write_duration.time():
-            inserted = self.storage.insert_events(processed_events)
+            inserted = self.storage.insert_events(processed_events, embeddings)
+
+        if embeddings is not None:
+            events_embedded.inc(inserted)
 
         skipped = len(processed_events) - inserted
         events_written_db.inc(inserted)
