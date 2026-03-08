@@ -234,6 +234,31 @@ class StorageManager:
 
             return cursor.rowcount
 
+    def search_events_by_vector(self, query_vector: List[float],
+                                limit: int = 5) -> List[Dict]:
+        """Return the events most semantically similar to a query vector.
+
+        Rows with no embedding are excluded rather than ranked last: a NULL
+        embedding means "not yet indexed", which is a different thing from
+        "indexed and unrelated", and ordering them in would put unindexed
+        events above genuinely weak matches.
+        """
+        with self.get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+            cursor.execute("""
+                SELECT
+                    event_id, title, description, url, source,
+                    published_at, category, crisis_level, severity_score,
+                    1 - (embedding <=> %s::vector) AS similarity
+                FROM events
+                WHERE embedding IS NOT NULL
+                ORDER BY embedding <=> %s::vector
+                LIMIT %s
+            """, (to_pgvector(query_vector), to_pgvector(query_vector), limit))
+
+            return [dict(row) for row in cursor.fetchall()]
+
     def get_recent_events(self, hours: int = 24, limit: int = 100) -> List[Dict]:
         """Fetch recent events from DB"""
         with self.get_connection() as conn:
