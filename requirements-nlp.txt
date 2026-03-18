@@ -10,6 +10,11 @@ torch==2.1.1
 # Sentence embeddings for semantic retrieval. 2.2.2 imports a huggingface_hub
 # symbol that newer releases removed, so the pin matters.
 sentence-transformers==2.7.0
+# The query API is served from this image because both models already live
+# here. waitress rather than Flask's development server, which is not meant
+# to face anything.
+flask==3.0.0
+waitress==2.1.2
 # Phi-4-mini's architecture needs a tokenizer conversion path that older
 # releases lack.
 sentencepiece==0.2.0
