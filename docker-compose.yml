@@ -135,6 +135,32 @@ services:
       - event-pipeline-network
     restart: unless-stopped
 
+  # Query API - answers questions over HTTP. Runs on the NLP image because the
+  # embedding and generation models already live there; the dashboard image
+  # deliberately carries no model stack.
+  query-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.nlp
+    container_name: query-api
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: python src/query_api.py
+    ports:
+      - "8100:8100"
+    volumes:
+      - ./src:/app/src
+      - ./logs:/app/logs
+      # Model weights persist here so they survive container recreation
+      # instead of being refetched on every start.
+      - huggingface-cache:/root/.cache/huggingface
+    networks:
+      - event-pipeline-network
+    restart: unless-stopped
+
   # Airflow PostgreSQL
   airflow-postgres:
     image: postgres:15-alpine
@@ -321,6 +347,7 @@ volumes:
   zookeeper-logs:
   kafka-data:
   postgres-data:
+  huggingface-cache:
   airflow-postgres-data:
   prometheus-data:
   grafana-data:
