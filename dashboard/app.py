@@ -14,6 +14,7 @@ import json
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from storage_manager import get_storage_manager
+from query_client import ask, health, format_source, QueryError
 
 st.set_page_config(
     page_title="Real-Time Event Detection",
@@ -359,12 +360,61 @@ def display_location_map(events):
         st.write(f"📍 **{loc}**: {data['count']} events (avg severity: {avg_severity:.2f})")
 
 
+def display_ask():
+    """Ask a question of the indexed reporting and show what it drew on"""
+    st.subheader("💬 Ask the reporting")
+    st.caption(
+        "Answered from indexed events only, by a local model. "
+        "Generation runs on your own hardware, so give it a few seconds."
+    )
+
+    with st.form('ask_form'):
+        question = st.text_input(
+            "Question",
+            placeholder="What happened with the flooding in Indiana?",
+            label_visibility='collapsed',
+        )
+        submitted = st.form_submit_button("Ask")
+
+    if not submitted:
+        return
+
+    try:
+        with st.spinner("Searching and generating..."):
+            payload = ask(question)
+    except QueryError as e:
+        # Distinguish "the service is down" from "the question found nothing";
+        # showing an empty result for the first would be a false statement.
+        st.error(str(e))
+        if not health():
+            st.info("The query service is not responding. It runs as the "
+                    "`query-api` container.")
+        return
+
+    st.success(payload.get('answer') or '')
+
+    sources = payload.get('sources') or []
+    if sources:
+        st.markdown(f"**Sources ({len(sources)})**")
+        for i, source in enumerate(sources, 1):
+            heading, detail = format_source(i, source)
+            st.markdown(heading)
+            st.markdown(
+                f"<div style='color:#666; font-size:0.85rem; "
+                f"margin:-0.6rem 0 0.6rem 1rem;'>{detail}</div>",
+                unsafe_allow_html=True,
+            )
+
+
 def main():
     """Main dashboard"""
     
     # Header
     st.markdown('<div class="main-header">🌍 Real-Time Global Event Detection Dashboard</div>', unsafe_allow_html=True)
     st.markdown("Monitor emerging global events in real-time")
+
+    display_ask()
+    st.markdown("---")
     
     # Sidebar
     with st.sidebar:
