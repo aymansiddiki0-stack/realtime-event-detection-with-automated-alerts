@@ -146,15 +146,23 @@ class AnswerBuilder:
         from transformers import pipeline
 
         device = 0 if torch.cuda.is_available() else -1
+
+        # Half precision on both paths. float32 would double the resident size
+        # for no useful gain here: a 3.8B model at fp32 needs ~15GB, which
+        # exceeds what this container is given and gets it OOM-killed before
+        # it finishes loading. bfloat16 on CPU rather than float16, since CPU
+        # float16 support is patchy while bfloat16 is well supported.
+        dtype = torch.float16 if device == 0 else torch.bfloat16
+
         logger.info(
-            f"Loading {self.model_name} on {'GPU' if device == 0 else 'CPU'}"
+            f"Loading {self.model_name} on {'GPU' if device == 0 else 'CPU'} as {dtype}"
         )
 
         return pipeline(
             'text-generation',
             model=self.model_name,
             device=device,
-            torch_dtype=torch.float16 if device == 0 else torch.float32,
+            torch_dtype=dtype,
         )
 
     def generate(self, question: str, events: List[Dict]) -> str:
