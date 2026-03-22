@@ -234,6 +234,42 @@ class StorageManager:
 
             return cursor.rowcount
 
+    def get_events_without_embeddings(self, limit: int = 200) -> List[Dict]:
+        """Events stored before embedding existed, oldest first.
+
+        Ordered oldest-first so a long backfill makes monotonic progress
+        rather than revisiting the same recent rows if it is interrupted.
+        """
+        with self.get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+            cursor.execute("""
+                SELECT event_id, title, description, content
+                FROM events
+                WHERE embedding IS NULL
+                ORDER BY id
+                LIMIT %s
+            """, (limit,))
+
+            return [dict(row) for row in cursor.fetchall()]
+
+    def update_embeddings(self, vectors: Dict[str, List[float]]) -> int:
+        """Attach vectors to events that already exist, keyed by event_id"""
+        if not vectors:
+            return 0
+
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+
+            execute_values(cursor, """
+                UPDATE events SET embedding = data.embedding::vector
+                FROM (VALUES %s) AS data(event_id, embedding)
+                WHERE events.event_id = data.event_id
+            """, [(event_id, to_pgvector(vector))
+                  for event_id, vector in vectors.items()])
+
+            return cursor.rowcount
+
     def search_events_by_vector(self, query_vector: List[float],
                                 limit: int = 5) -> List[Dict]:
         """Return the events most semantically similar to a query vector.
