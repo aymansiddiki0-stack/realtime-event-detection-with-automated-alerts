@@ -17,12 +17,14 @@ from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = 'microsoft/Phi-4-mini-instruct'
+# 1.5B rather than something larger, because this runs on CPU. See
+# _load_generator for why a bigger model is not usable here.
+DEFAULT_MODEL = 'Qwen/Qwen2.5-1.5B-Instruct'
 DEFAULT_SOURCES = 5
 
-# Enough for a few grounded paragraphs. Generation is the slow step on CPU,
-# so this is deliberately not generous.
-MAX_NEW_TOKENS = 400
+# Enough for a grounded paragraph or two. Generation is the slow step on CPU
+# and cost is linear in this number, so it is deliberately tight.
+MAX_NEW_TOKENS = 250
 
 SYSTEM_PROMPT = (
     "You answer questions about current events using only the numbered "
@@ -147,12 +149,19 @@ class AnswerBuilder:
 
         device = 0 if torch.cuda.is_available() else -1
 
-        # Half precision on both paths. float32 would double the resident size
-        # for no useful gain here: a 3.8B model at fp32 needs ~15GB, which
-        # exceeds what this container is given and gets it OOM-killed before
-        # it finishes loading. bfloat16 on CPU rather than float16, since CPU
-        # float16 support is patchy while bfloat16 is well supported.
-        dtype = torch.float16 if device == 0 else torch.bfloat16
+        # float32 on CPU, half precision only on GPU.
+        #
+        # The instinct is to halve memory with bfloat16 everywhere, and on this
+        # hardware that is a trap. PyTorch's fast bf16 kernels need avx512_bf16
+        # or amx_bf16; a CPU with only avx2 falls back to an unoptimised path
+        # that is slower by orders of magnitude. Measured here: 32 tokens did
+        # not finish in ten minutes at bfloat16, against seconds at float32.
+        #
+        # That constraint is what bounds the model size. float32 costs four
+        # bytes per parameter, so a 1.5B model is ~6GB and fits, while a 3.8B
+        # model is ~15GB and does not. Choosing a bigger model means choosing
+        # bf16, which on this CPU means choosing something unusable.
+        dtype = torch.float16 if device == 0 else torch.float32
 
         logger.info(
             f"Loading {self.model_name} on {'GPU' if device == 0 else 'CPU'} as {dtype}"
